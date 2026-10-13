@@ -8,6 +8,7 @@
 #include <QProcess>
 #include <QSaveFile>
 #include <QStandardPaths>
+#include <QThread>
 
 QString configureDms(bool restore) {
     const QString executable = QStandardPaths::findExecutable("dms");
@@ -52,8 +53,14 @@ QString configureDms(bool restore) {
     } else {
         if (preferences["wallpaper"].toArray().isEmpty())
             return {};
-        if (backup.exists())
-            return "A previous DMS backup exists. Restore it before preparing DMS again.";
+        if (backup.exists()) {
+            if (!backup.open(QIODevice::ReadOnly))
+                return "Cannot read the existing DMS backup.";
+            auto saved = QJsonDocument::fromJson(backup.readAll()).object();
+            backup.close();
+            if (saved["wallpaper"] != preferences["wallpaper"])
+                return "DMS settings changed since the backup; leaving them untouched.";
+        }
         QDir().mkpath(QFileInfo(path).absolutePath());
         QSaveFile file(path);
         if (!file.open(QIODevice::WriteOnly) ||
@@ -63,13 +70,39 @@ QString configureDms(bool restore) {
             return "Could not save the original DMS preference.";
         preferences["wallpaper"] = QJsonArray();
     }
-    if (!call({"ipc", "call", "settings", "set", "screenPreferences",
-               QString::fromUtf8(QJsonDocument(preferences).toJson(QJsonDocument::Compact))},
-              output))
-        return "DMS could not apply the setting; the backup is preserved.";
-    if (!call({"ipc", "call", "settings", "get", "screenPreferences"}, output) ||
-        QJsonDocument::fromJson(output).object()["wallpaper"] != preferences["wallpaper"])
-        return "Could not verify the DMS setting; the backup is preserved.";
+    // DMS 1.6 rejects object-valued IPC setters. Its documented config file
+    // supports external changes and reloads atomically through FileView.
+    const QString settingsPath =
+        QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) +
+        "/DankMaterialShell/settings.json";
+    QFile source(settingsPath);
+    if (!source.open(QIODevice::ReadOnly))
+        return "Cannot read the DMS settings file.";
+    auto settingsDocument = QJsonDocument::fromJson(source.readAll(), &error);
+    source.close();
+    if (error.error != QJsonParseError::NoError || !settingsDocument.isObject())
+        return "The DMS settings file is invalid; leaving it untouched.";
+    auto settings = settingsDocument.object();
+    auto current = settings["screenPreferences"].toObject();
+    const QJsonValue expected = doc.object().value("wallpaper");
+    if (current["wallpaper"] != expected)
+        return "DMS settings changed during setup; retry after closing its settings window.";
+    current["wallpaper"] = preferences["wallpaper"];
+    settings["screenPreferences"] = current;
+    QSaveFile destination(settingsPath);
+    if (!destination.open(QIODevice::WriteOnly) ||
+        destination.write(QJsonDocument(settings).toJson()) < 0 || !destination.commit())
+        return "Could not write the DMS settings file; the backup is preserved.";
+    bool verified = false;
+    for (int attempt = 0; attempt < 20 && !verified; ++attempt) {
+        QThread::msleep(100);
+        verified =
+            call({"ipc", "call", "settings", "get", "screenPreferences"}, output) &&
+            QJsonDocument::fromJson(output).object()["wallpaper"] == preferences["wallpaper"];
+    }
+    if (!verified)
+        return "The DMS setting is saved but live reload was not confirmed; the backup is "
+               "preserved.";
     if (restore)
         QFile::remove(path);
     return {};

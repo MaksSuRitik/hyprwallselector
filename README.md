@@ -70,7 +70,7 @@ wallpaper renderer should own each display.
 - **DMS:** use the DMS external-wallpaper button in Settings, or run
   `hyprwallselector --integrate-dms`. This changes the supported
   `screenPreferences.wallpaper` setting to `[]`, preserving other preferences
-  and saving the old value. `hyprwallselector --restore-dms` restores it if it
+  and saving the old value. DMS reloads its settings file automatically; its object-valued IPC setter is not used. `hyprwallselector --restore-dms` restores it if it
   has not subsequently been changed. No DMS source files are patched.
 - **Caelestia:** disable the wallpaper in its Wallpaper and Style settings
   (`background.wallpaperEnabled: false`), then use the Hyprwallselector renderer.

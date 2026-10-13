@@ -1,6 +1,6 @@
 pkgbase = hyprwallselector-git
 	pkgdesc = Independent image and video wallpaper carousel for Hyprland
-	pkgver = 0.1.0.r1.g636d3ab
+	pkgver = 0.1.0.r2.g3470035
 	pkgrel = 1
 	url = https://github.com/MaksSuRitik/hyprwallselector
 	arch = x86_64
