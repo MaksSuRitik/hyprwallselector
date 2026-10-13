@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Hyprwallselector
+Comment=Browse and manage image and video wallpapers
+Exec=hyprwallselector --toggle
+Icon=hyprwallselector
+Terminal=false
+Categories=Utility;Settings;DesktopSettings;
+Keywords=wallpaper;background;hyprland;video;
+StartupNotify=false

@@ -1,0 +1,6 @@
+/build*/
+/pkg/
+/srcpkg/
+*.pkg.tar.*
+*.tar.gz
+.SRCINFO.local

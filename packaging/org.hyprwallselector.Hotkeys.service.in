@@ -1,0 +1,5 @@
+[D-BUS Service]
+Name=org.hyprwallselector.Hotkeys
+Exec=@CMAKE_INSTALL_FULL_LIBEXECDIR@/hyprwallselector-hotkeys
+User=root
+SystemdService=hyprwallselector-hotkeys.service
