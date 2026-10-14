@@ -132,6 +132,15 @@ QVariantList catalogue(const QString &folder) {
 } // namespace
 Controller::Controller(bool sandbox, QObject *parent) : QObject(parent), m_sandbox(sandbox) {
     load();
+    m_palette.setEnabled(!m_sandbox && m_config["syncDmsColors"].toBool() &&
+                         m_config["manageBackground"].toBool() &&
+                         m_config["renderer"].toString() == "native");
+    connect(&m_palette, &DmsPalette::completed, this, [this](bool success) {
+        if (!success)
+            setStatus(text("paletteError"));
+        else if (m_status == text("paletteError"))
+            setStatus("");
+    });
     m_refresh.setSingleShot(true);
     m_refresh.setInterval(70);
     connect(&m_refresh, &QTimer::timeout, this, &Controller::refreshEnvironment);
@@ -208,6 +217,7 @@ void Controller::load() {
                 {"pauseBattery", true},
                 {"pauseFullscreen", true},
                 {"renderer", "native"},
+                {"syncDmsColors", false},
                 {"manageBackground", false},
                 {"autostart", false}};
     auto stored = readJson(m_configPath);
@@ -367,6 +377,9 @@ bool Controller::saveSettings(QVariantMap values) {
     bool backgroundChanged = next["manageBackground"] != m_config["manageBackground"] ||
                              next["renderer"] != m_config["renderer"];
     m_config = next;
+    m_palette.setEnabled(!m_sandbox && next["syncDmsColors"].toBool() &&
+                         next["manageBackground"].toBool() &&
+                         next["renderer"].toString() == "native");
     emit settingsChanged();
     emit currentChanged();
     setStatus("");
@@ -396,6 +409,7 @@ bool Controller::saveSettings(QVariantMap values) {
                     createWallpaper(s);
         }
         m_refresh.start();
+        syncPalette();
     }
     return true;
 }
@@ -465,6 +479,17 @@ void Controller::wallpaperReady(QString screen, QString path) {
         m_state["ALL"] = m_state[screen];
     saveState();
     emit currentChanged();
+    if (!m_sandbox)
+        m_palette.request(screen, path, videoFile(path));
+}
+void Controller::syncPalette() {
+    for (auto *screen : qGuiApp->screens()) {
+        auto state = m_state.value(screen->name()).toObject();
+        if (state.isEmpty())
+            state = m_state.value("ALL").toObject();
+        const QString path = state["path"].toString();
+        m_palette.request(screen->name(), path, videoFile(path));
+    }
 }
 void Controller::createWallpaper(QScreen *screen) {
     for (auto *view : m_wallpapers)
@@ -621,6 +646,43 @@ QString Controller::diagnostic() const {
 }
 QString Controller::text(QString key) const {
     static const QMap<QString, QStringList> words = {
+        {"settingsSaveHint",
+         {"Changes apply when you save.", "Зміни застосуються після збереження.",
+          "Изменения применятся после сохранения."}},
+        {"general", {"General", "Загальні", "Общие"}},
+        {"playback", {"Playback", "Відтворення", "Воспроизведение"}},
+        {"integration", {"Shell & colors", "Оболонка та кольори", "Оболочка и цвета"}},
+        {"settingsHint", {"Make it yours", "Налаштуйте під себе", "Настройте под себя"}},
+        {"generalHint",
+         {"Your library, language and shortcut.", "Ваша колекція, мова та сполучення.",
+          "Ваша коллекция, язык и сочетание."}},
+        {"playbackHint",
+         {"A quieter desktop when you need it.", "Менше навантаження, коли це потрібно.",
+          "Меньше нагрузки, когда это нужно."}},
+        {"integrationHint",
+         {"Keep your wallpaper and shell in harmony.", "Шпалери та оболонка в одному стилі.",
+          "Обои и оболочка в одном стиле."}},
+        {"syncDmsColors",
+         {"DMS colors & lock screen", "Кольори та екран блокування DMS",
+          "Цвета и экран блокировки DMS"}},
+        {"paletteHint",
+         {"Syncs the image or a still video frame. For colors, select Dynamic in DMS.",
+          "Синхронізує картинку або кадр відео. Для кольорів виберіть динамічну тему в DMS.",
+          "Синхронизирует картинку или кадр видео. Для цветов выберите динамическую тему в DMS."}},
+        {"paletteError",
+         {"Wallpaper applied; DMS colors could not be updated. Check that DMS is running.",
+          "Шпалери встановлено; кольори DMS не оновлено. Перевірте, чи працює DMS.",
+          "Обои установлены; цвета DMS не обновлены. Проверьте, запущен ли DMS."}},
+        {"energy", {"Energy saving", "Енергозбереження", "Энергосбережение"}},
+        {"pauseHint",
+         {"Video resumes automatically when you return.",
+          "Відео автоматично продовжиться, коли ви повернетеся.",
+          "Видео автоматически продолжится, когда вы вернётесь."}},
+        {"dmsHint",
+         {"One-time setup: let Hyprwallselector draw the wallpaper while DMS manages the shell.",
+          "Одноразове налаштування: шпалери малює Hyprwallselector, а оболонкою керує DMS.",
+          "Однократная настройка: обои рисует Hyprwallselector, а оболочкой управляет DMS."}},
+        {"close", {"Close", "Закрити", "Закрыть"}},
         {"renderer", {"Wallpaper renderer", "Рушій шпалер", "Движок обоев"}},
         {"dmsMode", {"Set up DMS", "Налаштувати DMS", "Настроить DMS"}},
         {"settings", {"Settings", "Налаштування", "Настройки"}},

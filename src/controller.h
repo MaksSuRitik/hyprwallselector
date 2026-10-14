@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
+#include "dmspalette.h"
 #include <QElapsedTimer>
 #include <QFileSystemWatcher>
 #include <QFutureWatcher>
@@ -20,6 +21,7 @@ class Controller final : public QObject {
     Q_PROPERTY(bool paused READ paused NOTIFY pausedChanged)
     Q_PROPERTY(QStringList screens READ screens NOTIFY screensChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
+    DmsPalette m_palette;
     QVariantList m_items;
     QJsonObject m_config;
     QJsonObject m_state;
@@ -49,6 +51,7 @@ class Controller final : public QObject {
     void watchHyprland();
     void setStatus(const QString &value);
     void saveState();
+    void syncPalette();
 
   public:
     explicit Controller(bool sandbox = false, QObject *parent = nullptr);
