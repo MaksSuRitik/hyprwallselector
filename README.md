@@ -7,7 +7,9 @@ parallelogram carousel. Written in C++20 and Qt Quick. Early development release
 
 - Alt+T opens the selector; Escape or a second Alt+T closes it.
 - Left/right or the mouse wheel browse; Enter applies; P previews a video.
-- Settings stay inside the selector. Save and Cancel return to the carousel.
+- Animated settings with General, Playback and Shell & colors sections.
+  Save and Cancel return to the carousel without closing it.
+- Optional DMS palette and lock-screen sync, including still frames for video wallpapers.
 - English, Українська and Русский interface languages.
 - Independent layer-shell UI: no tiled window, dock entry or fullscreen window animation.
 - Images and silent looping videos, crossfades, persistent selections per display.
@@ -18,8 +20,13 @@ parallelogram carousel. Written in C++20 and Qt Quick. Early development release
 ## Installation
 
 The source is at <https://github.com/MaksSuRitik/hyprwallselector>.
-An AUR recipe is provided in `packaging/aur`. Its presence here does **not** mean
-that the package has already been submitted to AUR.
+Install [hyprwallselector-git from AUR](https://aur.archlinux.org/packages/hyprwallselector-git):
+
+```sh
+yay -S hyprwallselector-git
+```
+
+The recipe is also provided in `packaging/aur`.
 
 On Arch, install dependencies and build on a Linux filesystem:
 
@@ -72,6 +79,13 @@ wallpaper renderer should own each display.
   `screenPreferences.wallpaper` setting to `[]`, preserving other preferences
   and saving the old value. DMS reloads its settings file automatically; its object-valued IPC setter is not used. `hyprwallselector --restore-dms` restores it if it
   has not subsequently been changed. No DMS source files are patched.
+  Enable **DMS colors & lock screen** to synchronize the selected image through
+  DMS wallpaper IPC. Videos send a cached still frame, so DMS does not start
+  another video player. Choose the **Dynamic** theme in DMS for adaptive colors;
+  keep its custom lock-screen wallpaper unset to follow the desktop. Existing
+  global/per-monitor mode and the DMS palette target monitor are respected.
+  Requests run asynchronously, coalesce rapid changes and retry briefly at login.
+  If DMS is unavailable, native wallpaper playback continues normally.
 - **Caelestia:** disable the wallpaper in its Wallpaper and Style settings
   (`background.wallpaperEnabled: false`), then use the Hyprwallselector renderer.
   Keep its desktop widgets enabled if desired.
@@ -114,8 +128,8 @@ UI tests generate their own image/video files and use a private Xvfb display.
 They do not overlay the user's desktop or modify shell preferences. They cover
 navigation, settings, video motion/pause and image/video transitions.
 
-Current limits: no wallpaper spanning, no DMS palette synchronization, no native
-end-4 renderer takeover. The broker requires Linux, udev, systemd-logind and a
+Current limits: no wallpaper spanning, still frames on the DMS lock screen for
+video wallpapers, no native end-4 renderer takeover. The broker requires Linux, udev, systemd-logind and a
 local active graphical session. Qt 6.10 or newer is required.
 
 Licensed under GPL-3.0-or-later.
