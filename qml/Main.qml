@@ -90,6 +90,7 @@ Item {
     }
     Item {
         id: carousel
+        enabled: !root.settingsOpen
         anchors.centerIn: parent
         width: root.width / root.uiScale
         height: 540
