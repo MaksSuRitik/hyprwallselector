@@ -2,6 +2,7 @@
 #include "controller.h"
 #include "integration.h"
 #include "mediaitem.h"
+#include "memorypolicy.h"
 #include <LayerShellQt/Window>
 #include <QCommandLineParser>
 #include <QDir>
@@ -20,6 +21,7 @@
 #include <clocale>
 
 int main(int argc, char **argv) {
+    configureWallpaperMemory();
     Q_INIT_RESOURCE(ui);
     Q_INIT_RESOURCE(shaders);
     QCoreApplication::setApplicationName("hyprwallselector");

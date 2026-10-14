@@ -51,6 +51,14 @@ class VideoRenderer final : public QQuickFramebufferObject::Renderer {
         gl->glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
         gl->glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
         if (!context) {
+            // libmpv's default "auto" eagerly probes *all* GL interop backends.
+            // On Intel/AMD this needlessly loads CUDA on hybrid laptops, retaining
+            // driver memory and waking the discrete GPU. Use the native VA-API
+            // interop for these GL vendors; keep automatic probing elsewhere.
+            const QByteArray vendor(reinterpret_cast<const char *>(gl->glGetString(GL_VENDOR)));
+            if (vendor.contains("Intel") || vendor.contains("AMD") ||
+                vendor.contains("ATI Technologies"))
+                mpv_set_option_string(player.get(), "gpu-hwdec-interop", "vaapi");
             if (qEnvironmentVariableIsSet("HWS_DEBUG"))
                 qInfo() << "Creating mpv GL context";
             mpv_opengl_init_params init{resolve, nullptr};
@@ -133,6 +141,16 @@ MediaItem::MediaItem(QQuickItem *parent) : QQuickFramebufferObject(parent) {
     for (const auto &p : {std::pair{"vo", "libmpv"},
                           {"config", "no"},
                           {"load-scripts", "no"},
+                          // load-scripts disables user scripts only. Built-in player UI
+                          // scripts each start a Lua thread and are unused by wallpapers.
+                          {"osc", "no"},
+                          {"load-stats-overlay", "no"},
+                          {"load-console", "no"},
+                          {"load-commands", "no"},
+                          {"load-auto-profiles", "no"},
+                          {"load-select", "no"},
+                          {"load-context-menu", "no"},
+                          {"load-positioning", "no"},
                           {"terminal", "no"},
                           {"audio", "no"},
                           {"sub", "no"},

@@ -131,18 +131,43 @@ sh tests/run-ui.sh /tmp/hyprwallselector-build/test-ui
 UI tests generate their own image/video files and use a private Xvfb display.
 They do not overlay the user's desktop or modify shell preferences. They cover
 navigation, settings, video motion/pause and image/video transitions. An optional
-memory stress test switches between eight generated 4K images and a video 48 times,
-checks that obsolete players/renderers are destroyed and reports RSS/PSS on Linux:
+memory stress test switches between eight generated 4K images and videos 48 times,
+checks that obsolete players/renderers are destroyed and reports RSS/PSS, private
+memory and allocator usage on Linux:
 
 ```sh
 HWS_MEMORY_TEST=1 sh tests/run-ui.sh /tmp/hyprwallselector-build/test-ui wallpaperMemory
 ```
+
+Xvfb uses software rendering and a small generated video. It does **not** validate
+real GPU/decoder memory use. For that, install `weston` and use the isolated
+headless GPU runner with a directory containing representative MP4 files:
+
+```sh
+HWS_MEMORY_TEST=1 HWS_MEMORY_MEDIA_DIR=/path/to/test-videos \
+  HWS_MEMORY_CYCLES=119 HWS_MEMORY_DWELL_MS=1000 \
+  HWS_MEMORY_SHOW_SELECTOR=1 HWS_MEMORY_SOAK_SECONDS=120 \
+  sh tests/run-gpu-ui.sh /tmp/hyprwallselector-build/test-ui wallpaperMemory
+```
+
+This reads the video files without changing them, alternates videos/images,
+opens/closes the selector, then keeps the final wallpaper playing. Check the
+reported GL renderer, decoder, dropped frames and memory trend after warm-up;
+a low startup measurement alone is not evidence of stable memory use.
+Set `HWS_MEMORY_MAX_PRIVATE_KB` to enforce a settled private-memory ceiling for a
+specific test machine/library (including the soak phase). RSS also counts shared
+libraries; GPU allocations and brief transition peaks are separate from this check.
 
 Native images are decoded to the output's physical pixel size and are not retained
 in the shared image cache. Hidden carousel cards unload, and local video packet
 buffers are bounded. `--diagnose` includes live player/renderer counts; transitions
 briefly need both the old and new wallpaper. Memory figures include the graphics
 and video drivers and will vary with resolution, codec and monitor count.
+On glibc, large allocations use a fixed 32 KiB mmap threshold so freed frame
+buffers can return to the OS instead of accumulating in allocator arenas.
+Explicit allocator threshold overrides are respected. Unused mpv UI scripts are
+disabled; Intel/AMD GL contexts use native VA-API interop without probing CUDA.
+These changes do not lower video resolution or frame rate.
 
 Current limits: no wallpaper spanning, still frames on the DMS lock screen for
 video wallpapers, no native end-4 renderer takeover. The broker requires Linux, udev, systemd-logind and a

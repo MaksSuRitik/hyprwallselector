@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "controller.h"
 #include "mediaitem.h"
+#include "memorypolicy.h"
 #include <QFile>
 #include <QJSValue>
 #include <QJsonDocument>
@@ -13,6 +14,7 @@
 #include <QTemporaryDir>
 #include <QtTest>
 #include <clocale>
+#include <malloc.h>
 class TestUi : public QObject {
     Q_OBJECT
     Controller *backend = nullptr;
@@ -386,7 +388,14 @@ class TestUi : public QObject {
             QVERIFY(image.save(path, "JPG", 90));
             paths << path;
         }
-        QString video = fixture.path() + "/library/video.mp4";
+        QStringList videos{fixture.path() + "/library/video.mp4"};
+        const QString mediaDir = qEnvironmentVariable("HWS_MEMORY_MEDIA_DIR");
+        if (!mediaDir.isEmpty()) {
+            videos.clear();
+            for (const auto &file : QDir(mediaDir).entryInfoList({"*.mp4"}, QDir::Files))
+                videos << file.absoluteFilePath();
+            QVERIFY(!videos.isEmpty());
+        }
         QQuickView wall;
         wall.resize(1920, 1080);
         wall.setResizeMode(QQuickView::SizeRootObjectToView);
@@ -396,6 +405,7 @@ class TestUi : public QObject {
         QCOMPARE(wall.status(), QQuickView::Ready);
         wall.show();
         QVERIFY(QTest::qWaitForWindowExposed(&wall));
+        qint64 privatePeak = 0;
         auto sample = [&](int cycle) {
             QFile smaps("/proc/self/smaps_rollup");
             if (!smaps.open(QIODevice::ReadOnly))
@@ -414,12 +424,23 @@ class TestUi : public QObject {
                               << MediaItem::livePlayers() << "renderers"
                               << MediaItem::liveRenderers() << "decks"
                               << wall.rootObject()->childItems().size();
+            privatePeak = qMax(privatePeak, priv.split(' ').value(1).toLongLong());
+            const auto heap = mallinfo2();
+            qInfo() << "HEAP" << cycle << "used" << heap.uordblks / 1024 << "free"
+                    << heap.fordblks / 1024 << "mapped" << heap.hblkhd / 1024;
         };
         sample(0);
-        for (int i = 0; i < 48; ++i) {
+        const int cycles = qEnvironmentVariableIntValue("HWS_MEMORY_CYCLES", nullptr) > 0
+                               ? qEnvironmentVariableIntValue("HWS_MEMORY_CYCLES")
+                               : 48;
+        const int dwell = qEnvironmentVariableIntValue("HWS_MEMORY_DWELL_MS", nullptr) > 0
+                              ? qEnvironmentVariableIntValue("HWS_MEMORY_DWELL_MS")
+                              : 100;
+        for (int i = 0; i < cycles; ++i) {
             // Revisit the same finite set, mixing images and video; memory should settle.
-            QString path = i % 4 == 2 ? video : paths[(i / 4 * 3 + i % 4) % paths.size()];
-            bool isVideo = path == video;
+            bool isVideo = i % 3 != 0;
+            QString path =
+                isVideo ? videos[(i / 3 * 2 + i % 3) % videos.size()] : paths[i % paths.size()];
             emit backend->wallpaperRequested("MEMORY", path, isVideo);
             QTRY_VERIFY_WITH_TIMEOUT(
                 wall.rootObject()->property("activeDeck").value<QQuickItem *>() != nullptr, 12000);
@@ -431,13 +452,45 @@ class TestUi : public QObject {
                                       path, 12000);
             QTRY_VERIFY_WITH_TIMEOUT(
                 wall.rootObject()->property("pendingDeck").value<QQuickItem *>() == nullptr, 12000);
-            QTest::qWait(100);
+            QTest::qWait(dwell);
             QTRY_COMPARE(MediaItem::livePlayers(), isVideo ? 1 : 0);
             QTRY_COMPARE(MediaItem::liveRenderers(), isVideo ? 1 : 0);
             QCOMPARE(wall.rootObject()->childItems().size(), 1);
-            if ((i + 1) % 4 == 0)
-                sample(i + 1);
+            sample(i + 1);
+            if (qEnvironmentVariableIsSet("HWS_MEMORY_SHOW_SELECTOR")) {
+                backend->toggle();
+                QTest::qWait(250);
+                backend->hide();
+                QTest::qWait(100);
+            }
         }
+        const int soak = qEnvironmentVariableIntValue("HWS_MEMORY_SOAK_SECONDS");
+        for (int second = 0; second < soak; ++second) {
+            QTest::qWait(1000);
+            if ((second + 1) % 15 == 0)
+                sample(cycles + second + 1);
+        }
+        if (auto *active = wall.rootObject()->property("activeDeck").value<QQuickItem *>()) {
+            std::function<void(QQuickItem *)> describeVideo = [&](QQuickItem *item) {
+                if (auto *video = qobject_cast<MediaItem *>(item)) {
+                    for (const auto *property : {"hwdec-current", "hwdec-interop", "time-pos",
+                                                 "frame-drop-count", "decoder-frame-drop-count"}) {
+                        char *value = mpv_get_property_string(video->handle(), property);
+                        qInfo() << "PLAYBACK" << property << (value ? value : "unavailable");
+                        mpv_free(value);
+                    }
+                }
+                for (auto *child : item->childItems())
+                    describeVideo(child);
+            };
+            describeVideo(active);
+        }
+        const auto limit = qEnvironmentVariableIntValue("HWS_MEMORY_MAX_PRIVATE_KB");
+        if (limit > 0)
+            QVERIFY2(privatePeak <= limit,
+                     qPrintable(QString("Settled private memory peaked at %1 KiB (limit %2)")
+                                    .arg(privatePeak)
+                                    .arg(limit)));
         wall.hide();
         backend->toggle();
     }
@@ -454,6 +507,7 @@ class TestUi : public QObject {
     }
 };
 int main(int argc, char **argv) {
+    configureWallpaperMemory();
     if (qEnvironmentVariable("HWS_TEST_DISPLAY") != "isolated") {
         qCritical("Run tests/run-ui.sh: UI tests require a separate display.");
         return 2;
