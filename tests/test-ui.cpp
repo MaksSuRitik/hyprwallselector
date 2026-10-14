@@ -2,6 +2,7 @@
 #include "controller.h"
 #include "mediaitem.h"
 #include <QFile>
+#include <QJSValue>
 #include <QJsonDocument>
 #include <QPainter>
 #include <QProcess>
@@ -101,6 +102,61 @@ class TestUi : public QObject {
             QTest::keyClick(view, Qt::Key_Right);
             QCOMPARE(root->property("selected").toInt(), (index + 1) % backend->items().size());
         }
+    }
+    void settingsDraftAndScreenshots() {
+        auto *root = view->rootObject();
+        auto *panel = root->findChild<QQuickItem *>("settingsPanel");
+        QVERIFY(panel);
+        auto click = [this, root](const char *name) {
+            QQuickItem *item = nullptr;
+            std::function<void(QQuickItem *)> find = [&](QQuickItem *node) {
+                if (node->objectName() == name)
+                    item = node;
+                for (auto *child : node->childItems())
+                    find(child);
+            };
+            find(root);
+            if (!item)
+                return false;
+            QTest::mouseClick(
+                view, Qt::LeftButton, Qt::NoModifier,
+                item->mapToScene(QPointF(item->width() / 2, item->height() / 2)).toPoint());
+            return true;
+        };
+        for (const auto &language : {"en", "uk", "ru"}) {
+            auto config = backend->settings();
+            config["language"] = language;
+            QVERIFY(backend->saveSettings(config));
+            QVERIFY(QMetaObject::invokeMethod(root, "openSettings"));
+            QTest::qWait(280);
+            QCOMPARE(root->findChild<QQuickItem *>("settingsTitle")->property("text").toString(),
+                     backend->text("settings"));
+            for (int tab = 0; tab < 3; ++tab) {
+                QVERIFY(click(qPrintable("settingsTab" + QString::number(tab))));
+                QCOMPARE(panel->property("tab").toInt(), tab);
+                QTest::qWait(260);
+                if (!qEnvironmentVariable("HWS_TEST_SETTINGS_SCREENSHOT").isEmpty())
+                    QVERIFY(view->grabWindow().save(
+                        qEnvironmentVariable("HWS_TEST_SETTINGS_SCREENSHOT") + "-" + language +
+                        "-" + QString::number(tab) + ".png"));
+            }
+            QVERIFY(click("dmsColorsSetting"));
+            QCOMPARE(panel->property("draft").value<QJSValue>().property("syncDmsColors").toBool(),
+                     true);
+            QVERIFY(click("cancelSettings"));
+            QTRY_VERIFY(!root->property("settingsOpen").toBool());
+            QVERIFY(!backend->settings()["syncDmsColors"].toBool());
+        }
+        auto config = backend->settings();
+        config["language"] = "en";
+        QVERIFY(backend->saveSettings(config));
+        QVERIFY(QMetaObject::invokeMethod(root, "openSettings"));
+        QTest::qWait(280);
+        QVERIFY(click("dmsColorsSetting"));
+        QVERIFY(click("saveSettings"));
+        QTRY_VERIFY(!root->property("settingsOpen").toBool());
+        QVERIFY(backend->settings()["syncDmsColors"].toBool());
+        QVERIFY(view->isVisible());
     }
     void videoPreview() {
         auto *root = view->rootObject();
