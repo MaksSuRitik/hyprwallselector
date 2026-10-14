@@ -33,4 +33,6 @@ while [ ! -S "$runtime/hws-test" ]; do
 done
 sed -n '/GL renderer:/p' "$runtime/weston.log"
 export WAYLAND_DISPLAY=hws-test HWS_TEST_DISPLAY=isolated
+# The optional switch-and-soak test exceeds QtTest's default five-minute watchdog.
+export QTEST_FUNCTION_TIMEOUT="${QTEST_FUNCTION_TIMEOUT:-900000}"
 "$@"
