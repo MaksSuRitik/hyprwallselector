@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "controller.h"
+#include "mediaitem.h"
 #include <LayerShellQt/Window>
 #include <QCryptographicHash>
 #include <QDateTime>
@@ -483,14 +484,16 @@ void Controller::saveState() {
     if (!m_sandbox && !writeJson(m_statePath, m_state))
         setStatus(text("saveError"));
 }
+void Controller::wallpaperPrepared(QString screen, QString path) {
+    if (!m_sandbox)
+        m_palette.request(screen, path, videoFile(path));
+}
 void Controller::wallpaperReady(QString screen, QString path) {
     m_state[screen] = QJsonObject{{"path", path}, {"video", videoFile(path)}};
     if (!m_allRequest.isEmpty() && path == m_allRequest)
         m_state["ALL"] = m_state[screen];
     saveState();
     emit currentChanged();
-    if (!m_sandbox)
-        m_palette.request(screen, path, videoFile(path));
 }
 void Controller::syncPalette() {
     for (auto *screen : qGuiApp->screens()) {
@@ -644,15 +647,18 @@ void Controller::refreshEnvironment() {
     });
 }
 QString Controller::diagnostic() const {
-    return QString::fromUtf8(QJsonDocument(QJsonObject{{"version", "0.1.0"},
-                                                       {"visible", m_visible},
-                                                       {"paused", m_paused},
-                                                       {"locked", m_locked},
-                                                       {"items", m_items.size()},
-                                                       {"wallpaperWindows", m_wallpapers.size()},
-                                                       {"status", m_status},
-                                                       {"settings", m_config}})
-                                 .toJson());
+    return QString::fromUtf8(
+        QJsonDocument(QJsonObject{{"version", "0.1.0"},
+                                  {"visible", m_visible},
+                                  {"paused", m_paused},
+                                  {"locked", m_locked},
+                                  {"items", m_items.size()},
+                                  {"wallpaperWindows", m_wallpapers.size()},
+                                  {"videoPlayers", MediaItem::livePlayers()},
+                                  {"videoRenderers", MediaItem::liveRenderers()},
+                                  {"status", m_status},
+                                  {"settings", m_config}})
+            .toJson());
 }
 QString Controller::text(QString key) const {
     static const QMap<QString, QStringList> words = {

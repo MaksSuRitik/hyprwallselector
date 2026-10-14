@@ -86,7 +86,9 @@ wallpaper renderer should own each display.
   another video player. Choose the **Dynamic** theme in DMS for adaptive colors;
   keep its custom lock-screen wallpaper unset to follow the desktop. Existing
   global/per-monitor mode and the DMS palette target monitor are respected.
-  Requests run asynchronously, coalesce rapid changes and retry briefly at login.
+  Requests start as soon as the new image/video has loaded, alongside the crossfade,
+  rather than after it. They run asynchronously, coalesce queued changes and retry
+  briefly at login. DMS still controls the actual color extraction and theme update.
   If DMS is unavailable, native wallpaper playback continues normally.
 - **Caelestia:** disable the wallpaper in its Wallpaper and Style settings
   (`background.wallpaperEnabled: false`), then use the Hyprwallselector renderer.
@@ -128,7 +130,19 @@ sh tests/run-ui.sh /tmp/hyprwallselector-build/test-ui
 
 UI tests generate their own image/video files and use a private Xvfb display.
 They do not overlay the user's desktop or modify shell preferences. They cover
-navigation, settings, video motion/pause and image/video transitions.
+navigation, settings, video motion/pause and image/video transitions. An optional
+memory stress test switches between eight generated 4K images and a video 48 times,
+checks that obsolete players/renderers are destroyed and reports RSS/PSS on Linux:
+
+```sh
+HWS_MEMORY_TEST=1 sh tests/run-ui.sh /tmp/hyprwallselector-build/test-ui wallpaperMemory
+```
+
+Native images are decoded to the output's physical pixel size and are not retained
+in the shared image cache. Hidden carousel cards unload, and local video packet
+buffers are bounded. `--diagnose` includes live player/renderer counts; transitions
+briefly need both the old and new wallpaper. Memory figures include the graphics
+and video drivers and will vary with resolution, codec and monitor count.
 
 Current limits: no wallpaper spanning, still frames on the DMS lock screen for
 video wallpapers, no native end-4 renderer takeover. The broker requires Linux, udev, systemd-logind and a

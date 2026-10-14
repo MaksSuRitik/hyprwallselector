@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import QtQuick
+import QtQuick.Window
 import Hyprwallselector 1.0
 
 Item {
@@ -23,6 +24,13 @@ Item {
         backend.reportError(message);
     }
     function request(path, video) {
+        if (pendingDeck && pendingDeck.path === path && pendingDeck.video === video)
+            return;
+        if (!pendingDeck && activeDeck && activeDeck.path === path && activeDeck.video === video) {
+            backend.wallpaperPrepared(outputName, path);
+            backend.wallpaperReady(outputName, path);
+            return;
+        }
         generation++;
         fade.stop();
         if (pendingDeck) {
@@ -36,8 +44,11 @@ Item {
         });
     }
     function prepared(item) {
-        if (item !== pendingDeck || item.generation !== generation)
+        if (item !== pendingDeck || item.generation !== generation || item.frameReady)
             return;
+        item.frameReady = true;
+        // Start the shell's palette work alongside the crossfade, after loading succeeds.
+        backend.wallpaperPrepared(outputName, item.path);
         fade.target = item;
         fade.start();
     }
@@ -68,11 +79,22 @@ Item {
                     source: backend.fileUrl(page.path)
                     fillMode: backend.settings.fit === "contain" ? Image.PreserveAspectFit : Image.PreserveAspectCrop
                     asynchronous: true
+                    // Decode for physical output pixels, not the full 4K/8K source.
+                    // Wallpaper decks already own the current/transition images;
+                    // retaining them again in Qt's global cache wastes memory.
+                    sourceSize: Qt.size(Math.ceil(width * Screen.devicePixelRatio), Math.ceil(height * Screen.devicePixelRatio))
+                    cache: false
                     onStatusChanged: {
                         if (status === Image.Ready)
-                            Qt.callLater(() => root.prepared(page));
+                            Qt.callLater(() => {
+                                if (root && page)
+                                    root.prepared(page);
+                            });
                         else if (status === Image.Error)
-                            Qt.callLater(() => root.failed(page, "Cannot load: " + page.path));
+                            Qt.callLater(() => {
+                                if (root && page)
+                                    root.failed(page, "Cannot load: " + page.path);
+                            });
                     }
                 }
             }
@@ -83,7 +105,10 @@ Item {
                     paused: ready && root.paused
                     onReadyChanged: {
                         if (ready)
-                            Qt.callLater(() => root.prepared(page));
+                            Qt.callLater(() => {
+                                if (root && page)
+                                    root.prepared(page);
+                            });
                     }
                     onFailed: message => root.failed(page, message)
                 }

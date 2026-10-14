@@ -48,6 +48,7 @@ class TestUi : public QObject {
         config.close();
         backend = new Controller(true);
         view = new QQuickView;
+        view->setPersistentSceneGraph(false);
         view->resize(1280, 800);
         view->setColor(Qt::transparent);
         view->setResizeMode(QQuickView::SizeRootObjectToView);
@@ -307,7 +308,8 @@ class TestUi : public QObject {
             media.first()->setPaused(false);
             QTest::keyClick(view, Qt::Key_P);
             QVERIFY(!root->property("previewing").toBool());
-            QTest::qWait(150);
+            QTRY_COMPARE(MediaItem::livePlayers(), 0);
+            QTRY_COMPARE(MediaItem::liveRenderers(), 0);
         }
     }
     void wallpaperTransitions() {
@@ -341,7 +343,16 @@ class TestUi : public QObject {
                                           ->property("path")
                                           .toString(),
                                       path, 12000);
-            QTest::qWait(200);
+            QTRY_VERIFY(wall.rootObject()->property("pendingDeck").value<QQuickItem *>() ==
+                        nullptr);
+            QTRY_COMPARE(MediaItem::livePlayers(), isVideo ? 1 : 0);
+            QTRY_COMPARE(MediaItem::liveRenderers(), isVideo ? 1 : 0);
+            auto *active = wall.rootObject()->property("activeDeck").value<QQuickItem *>();
+            QSignalSpy ready(backend, &Controller::currentChanged);
+            emit backend->wallpaperRequested("TEST", path, isVideo);
+            QCOMPARE(wall.rootObject()->property("activeDeck").value<QQuickItem *>(), active);
+            QVERIFY(wall.rootObject()->property("pendingDeck").value<QQuickItem *>() == nullptr);
+            QCOMPARE(ready.count(), 1);
         }
         emit backend->wallpaperRequested("TEST", fixture.path() + "/missing.png", false);
         QTRY_VERIFY(wall.rootObject()->property("pendingDeck").value<QQuickItem *>() == nullptr);
@@ -357,6 +368,77 @@ class TestUi : public QObject {
                                   still, 8000);
         wall.hide();
         QTest::qWait(100);
+        backend->toggle();
+    }
+    void wallpaperMemory() {
+        if (!qEnvironmentVariableIsSet("HWS_MEMORY_TEST"))
+            QSKIP("Opt-in memory stress test");
+        backend->hide();
+        QStringList paths;
+        for (int i = 0; i < 8; ++i) {
+            QImage image(3840, 2160, QImage::Format_RGB32);
+            image.fill(QColor::fromHsv(i * 43, 130, 160));
+            QPainter paint(&image);
+            paint.setPen(Qt::white);
+            paint.drawText(image.rect(), Qt::AlignCenter, "4K wallpaper " + QString::number(i));
+            paint.end();
+            auto path = fixture.path() + "/wall-" + QString::number(i) + ".jpg";
+            QVERIFY(image.save(path, "JPG", 90));
+            paths << path;
+        }
+        QString video = fixture.path() + "/library/video.mp4";
+        QQuickView wall;
+        wall.resize(1920, 1080);
+        wall.setResizeMode(QQuickView::SizeRootObjectToView);
+        wall.rootContext()->setContextProperty("backend", backend);
+        wall.rootContext()->setContextProperty("outputName", "MEMORY");
+        wall.setSource(QUrl("qrc:/qml/Wallpaper.qml"));
+        QCOMPARE(wall.status(), QQuickView::Ready);
+        wall.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&wall));
+        auto sample = [&](int cycle) {
+            QFile smaps("/proc/self/smaps_rollup");
+            if (!smaps.open(QIODevice::ReadOnly))
+                return;
+            auto lines = smaps.readAll().split('\n');
+            QByteArray rss, pss, priv;
+            for (auto line : lines) {
+                if (line.startsWith("Rss:"))
+                    rss = line.simplified();
+                if (line.startsWith("Pss:"))
+                    pss = line.simplified();
+                if (line.startsWith("Private_Dirty:"))
+                    priv = line.simplified();
+            }
+            qInfo().noquote() << "MEMORY" << cycle << rss << pss << priv << "players"
+                              << MediaItem::livePlayers() << "renderers"
+                              << MediaItem::liveRenderers() << "decks"
+                              << wall.rootObject()->childItems().size();
+        };
+        sample(0);
+        for (int i = 0; i < 48; ++i) {
+            // Revisit the same finite set, mixing images and video; memory should settle.
+            QString path = i % 4 == 2 ? video : paths[(i / 4 * 3 + i % 4) % paths.size()];
+            bool isVideo = path == video;
+            emit backend->wallpaperRequested("MEMORY", path, isVideo);
+            QTRY_VERIFY_WITH_TIMEOUT(
+                wall.rootObject()->property("activeDeck").value<QQuickItem *>() != nullptr, 12000);
+            QTRY_COMPARE_WITH_TIMEOUT(wall.rootObject()
+                                          ->property("activeDeck")
+                                          .value<QQuickItem *>()
+                                          ->property("path")
+                                          .toString(),
+                                      path, 12000);
+            QTRY_VERIFY_WITH_TIMEOUT(
+                wall.rootObject()->property("pendingDeck").value<QQuickItem *>() == nullptr, 12000);
+            QTest::qWait(100);
+            QTRY_COMPARE(MediaItem::livePlayers(), isVideo ? 1 : 0);
+            QTRY_COMPARE(MediaItem::liveRenderers(), isVideo ? 1 : 0);
+            QCOMPARE(wall.rootObject()->childItems().size(), 1);
+            if ((i + 1) % 4 == 0)
+                sample(i + 1);
+        }
+        wall.hide();
         backend->toggle();
     }
     void hideShow() {

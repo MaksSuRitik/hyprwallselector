@@ -39,7 +39,8 @@ void DmsPalette::request(const QString &screen, const QString &path, bool video)
     if (!m_enabled || screen.isEmpty() || !QFileInfo(path).isReadable())
         return;
     m_pending[screen] = {path, video, 0};
-    m_debounce.start(220);
+    // Coalesce requests from this event-loop turn without adding visible latency.
+    m_debounce.start(0);
 }
 void DmsPalette::run(Stage stage, const QString &program, const QStringList &args) {
     m_stage = stage;
@@ -145,5 +146,5 @@ void DmsPalette::finish(bool success, bool retry) {
     if (!superseded)
         emit completed(success);
     if (!m_pending.isEmpty())
-        m_debounce.start(220);
+        m_debounce.start(0);
 }

@@ -14,6 +14,8 @@ class MediaItem : public QQuickFramebufferObject {
     mpv_handle *m_mpv = nullptr;
 
   public:
+    static int livePlayers();
+    static int liveRenderers();
     explicit MediaItem(QQuickItem *parent = nullptr);
     ~MediaItem() override;
     Renderer *createRenderer() const override;

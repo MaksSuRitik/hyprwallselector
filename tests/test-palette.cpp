@@ -49,10 +49,13 @@ class TestPalette : public QObject {
         DmsPalette palette;
         QSignalSpy done(&palette, &DmsPalette::completed);
         palette.setEnabled(true);
+        QElapsedTimer elapsed;
+        elapsed.start();
         for (int i = 0; i < 10; ++i)
             palette.request("DP-1", source, false);
         QTRY_COMPARE(done.size(), 1);
         QVERIFY(done.first().first().toBool());
+        qInfo() << "Palette mock IPC completed in" << elapsed.elapsed() << "ms";
         QCOMPARE(calls(), QList<QStringList>({{"ipc", "call", "wallpaper", "get"},
                                               {"ipc", "call", "wallpaper", "set", source}}));
     }

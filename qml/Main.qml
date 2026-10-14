@@ -121,7 +121,7 @@ Item {
                     motion = Math.abs(dist - oldDist) <= 2;
                     oldDist = dist;
                 }
-                active: Math.abs(dist) <= Math.ceil(carousel.width / 300) + 2
+                active: backend.visible && Math.abs(dist) <= Math.ceil(carousel.width / 300) + 2
                 visible: active
                 width: dist === 0 ? 600 : 180
                 height: dist === 0 ? 300 : [252, 228, 208, 192][Math.max(0, tier - 1)]

@@ -9,8 +9,19 @@
 #include <QQuickWindow>
 #include <QUrl>
 #include <QtGui/qguiapplication_platform.h>
+#include <atomic>
 #include <mpv/render_gl.h>
 #include <vector>
+
+namespace {
+std::atomic<int> playerCount{0}, rendererCount{0};
+}
+int MediaItem::livePlayers() {
+    return playerCount.load();
+}
+int MediaItem::liveRenderers() {
+    return rendererCount.load();
+}
 
 class VideoRenderer final : public QQuickFramebufferObject::Renderer {
     mpv_render_context *context = nullptr;
@@ -21,10 +32,13 @@ class VideoRenderer final : public QQuickFramebufferObject::Renderer {
     }
 
   public:
-    explicit VideoRenderer(MediaItem *owner) : item(owner), player(owner->player()) {}
+    explicit VideoRenderer(MediaItem *owner) : item(owner), player(owner->player()) {
+        ++rendererCount;
+    }
     ~VideoRenderer() override {
         if (context)
             mpv_render_context_free(context);
+        --rendererCount;
     }
     void render() override {
         if (!item || !player)
@@ -100,7 +114,8 @@ class VideoRenderer final : public QQuickFramebufferObject::Renderer {
         QQuickOpenGLUtils::resetOpenGLState();
     }
     QOpenGLFramebufferObject *createFramebufferObject(const QSize &size) override {
-        return new QOpenGLFramebufferObject(size, QOpenGLFramebufferObject::CombinedDepthStencil);
+        // mpv draws a color target; a full-size depth/stencil attachment is unused.
+        return new QOpenGLFramebufferObject(size);
     }
 };
 MediaItem::MediaItem(QQuickItem *parent) : QQuickFramebufferObject(parent) {
@@ -110,7 +125,11 @@ MediaItem::MediaItem(QQuickItem *parent) : QQuickFramebufferObject(parent) {
     m_mpv = mpv_create();
     if (!m_mpv)
         return;
-    m_player = std::shared_ptr<mpv_handle>(m_mpv, mpv_terminate_destroy);
+    ++playerCount;
+    m_player = std::shared_ptr<mpv_handle>(m_mpv, [](mpv_handle *handle) {
+        mpv_terminate_destroy(handle);
+        --playerCount;
+    });
     for (const auto &p : {std::pair{"vo", "libmpv"},
                           {"config", "no"},
                           {"load-scripts", "no"},
@@ -119,6 +138,11 @@ MediaItem::MediaItem(QQuickItem *parent) : QQuickFramebufferObject(parent) {
                           {"sub", "no"},
                           {"ytdl", "no"},
                           {"hwdec", "auto-safe"},
+                          // Only local wallpaper files are supported. Bound packet queues
+                          // instead of keeping the default 150+50 MiB media-player cache.
+                          {"cache", "no"},
+                          {"demuxer-max-bytes", "16MiB"},
+                          {"demuxer-max-back-bytes", "0"},
                           {"loop-file", "inf"},
                           {"keep-open", "yes"},
                           {"input-default-bindings", "no"},

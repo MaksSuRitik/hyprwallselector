@@ -83,6 +83,7 @@ class Controller final : public QObject {
     Q_INVOKABLE void scan();
     Q_INVOKABLE bool saveSettings(QVariantMap values);
     Q_INVOKABLE void apply(int index);
+    Q_INVOKABLE void wallpaperPrepared(QString screen, QString path);
     Q_INVOKABLE void wallpaperReady(QString screen, QString path);
     Q_INVOKABLE void reportError(QString message);
     Q_INVOKABLE QString text(QString key) const;
