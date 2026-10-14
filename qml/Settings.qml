@@ -2,7 +2,6 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import QtQuick.Dialogs
 
 Rectangle {
     id: panel
@@ -51,7 +50,7 @@ Rectangle {
         language.popup.close();
         display.popup.close();
         renderer.popup.close();
-        folderDialog.close();
+        folderPicker.close();
     }
     function leave() {
         if (closing)
@@ -66,7 +65,10 @@ Rectangle {
     focus: true
     Keys.onPressed: event => {
         if (event.key === Qt.Key_Escape) {
-            leave();
+            if (folderPicker.visible)
+                folderPicker.close();
+            else
+                leave();
             event.accepted = true;
         }
     }
@@ -304,6 +306,7 @@ Rectangle {
                 RowLayout {
                     TextField {
                         id: folder
+                        objectName: "wallpaperFolder"
                         Layout.fillWidth: true
                         implicitHeight: 42
                         color: "#e9eef5"
@@ -319,7 +322,8 @@ Rectangle {
                     }
                     SoftButton {
                         text: panel.tr("browse")
-                        onClicked: folderDialog.open()
+                        objectName: "browseFolder"
+                        onClicked: folderPicker.choose(folder.text)
                     }
                 }
                 RowLayout {
@@ -534,9 +538,13 @@ Rectangle {
             }
         }
     }
-    FolderDialog {
-        id: folderDialog
-        title: panel.tr("folder")
-        onAccepted: folder.text = backend.filePath(selectedFolder.toString())
+    FolderPicker {
+        id: folderPicker
+        parent: panel
+        scale: panel.scale
+        translate: key => panel.tr(key)
+        onChosen: path => folder.text = path
+        onClosed: if (panel.visible && !panel.closing)
+            folder.forceActiveFocus()
     }
 }

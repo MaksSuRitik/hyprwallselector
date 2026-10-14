@@ -87,6 +87,7 @@ class Controller final : public QObject {
     Q_INVOKABLE void reportError(QString message);
     Q_INVOKABLE QString text(QString key) const;
     Q_INVOKABLE QString filePath(QString url) const;
+    Q_INVOKABLE QUrl directoryUrl(QString path) const;
     Q_INVOKABLE QUrl fileUrl(QString path) const {
         return QUrl::fromLocalFile(path);
     }

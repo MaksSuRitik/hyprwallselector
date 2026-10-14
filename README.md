@@ -10,6 +10,8 @@ parallelogram carousel. Written in C++20 and Qt Quick. Early development release
 - Animated settings with General, Playback and Shell & colors sections.
   Save and Cancel return to the carousel without closing it.
 - Optional DMS palette and lock-screen sync, including still frames for video wallpapers.
+- Folder browsing stays inside the selector, without an external portal/file-manager
+  window competing with the layer-shell overlay. Supports typed paths and mounted disks.
 - English, Українська and Русский interface languages.
 - Independent layer-shell UI: no tiled window, dock entry or fullscreen window animation.
 - Images and silent looping videos, crossfades, persistent selections per display.

@@ -355,6 +355,16 @@ void Controller::reportError(QString message) {
 QString Controller::filePath(QString url) const {
     return localPath(url);
 }
+QUrl Controller::directoryUrl(QString path) const {
+    if (path.isEmpty())
+        return {};
+    if (path == "~")
+        path = QDir::homePath();
+    QFileInfo directory(localPath(path));
+    if (!directory.isDir() || !directory.isReadable() || !directory.isExecutable())
+        return {};
+    return QUrl::fromLocalFile(directory.absoluteFilePath());
+}
 void Controller::openFolder() {
     QDesktopServices::openUrl(QUrl::fromLocalFile(m_config["folder"].toString()));
 }
@@ -646,6 +656,18 @@ QString Controller::diagnostic() const {
 }
 QString Controller::text(QString key) const {
     static const QMap<QString, QStringList> words = {
+        {"home", {"Home", "Домівка", "Домой"}},
+        {"disks", {"Disks", "Диски", "Диски"}},
+        {"parentFolder", {"Parent folder", "Батьківська папка", "На уровень выше"}},
+        {"hiddenFolders", {"Hidden folders", "Приховані папки", "Скрытые папки"}},
+        {"noSubfolders",
+         {"No subfolders — you can choose this folder.", "Немає підпапок — можна вибрати цю папку.",
+          "Нет подпапок — можно выбрать эту папку."}},
+        {"chooseFolder", {"Choose this folder", "Вибрати цю папку", "Выбрать эту папку"}},
+        {"chooseFolderHint",
+         {"Open a folder, then choose it. Changes apply after saving Settings.",
+          "Відкрийте папку та виберіть її. Зміни застосуються після збереження налаштувань.",
+          "Откройте папку и выберите её. Изменения применятся после сохранения настроек."}},
         {"settingsSaveHint",
          {"Changes apply when you save.", "Зміни застосуються після збереження.",
           "Изменения применятся после сохранения."}},

@@ -158,6 +158,115 @@ class TestUi : public QObject {
         QVERIFY(backend->settings()["syncDmsColors"].toBool());
         QVERIFY(view->isVisible());
     }
+    void embeddedFolderPicker() {
+        auto *root = view->rootObject();
+        auto *panel = root->findChild<QQuickItem *>("settingsPanel");
+        auto *picker = panel->findChild<QObject *>("folderPicker");
+        QVERIFY(picker);
+        const QString original = backend->settings()["folder"].toString();
+        const QString child = original + "/Папка #1 with spaces";
+        QVERIFY(QDir().mkpath(child));
+        QVERIFY(QDir().mkpath(original + "/.hidden"));
+        const int windows = qGuiApp->allWindows().size();
+        auto click = [this](const char *name) {
+            QQuickItem *item = nullptr;
+            std::function<void(QQuickItem *)> find = [&](QQuickItem *node) {
+                if (node->objectName() == name)
+                    item = node;
+                for (auto *c : node->childItems())
+                    find(c);
+            };
+            find(view->contentItem());
+            if (!item)
+                return false;
+            QTest::mouseClick(
+                view, Qt::LeftButton, Qt::NoModifier,
+                item->mapToScene(QPointF(item->width() / 2, item->height() / 2)).toPoint());
+            return true;
+        };
+        panel->setProperty("tab", 0);
+        QVERIFY(QMetaObject::invokeMethod(root, "openSettings"));
+        QTest::qWait(280);
+        for (int i = 0; i < 3; ++i) {
+            QVERIFY(click("browseFolder"));
+            QTRY_VERIFY(picker->property("opened").toBool());
+            QCOMPARE(qGuiApp->allWindows().size(), windows);    // No portal or extra native window.
+            QCOMPARE(picker->property("popupType").toInt(), 0); // Popup.Item
+            QTest::keyClick(view, Qt::Key_Escape);
+            QTRY_VERIFY(!picker->property("visible").toBool());
+            QVERIFY(root->property("settingsOpen").toBool());
+        }
+        QVERIFY(click("browseFolder"));
+        QTRY_VERIFY(picker->property("opened").toBool());
+        auto *model = picker->findChild<QObject *>("folderPickerModel");
+        QVERIFY(model);
+        QTRY_COMPARE(model->property("count").toInt(), 1); // Hide files and hidden directories.
+        QVERIFY(click("cancelSettings")); // Modal popup must block the settings behind it.
+        QVERIFY(root->property("settingsOpen").toBool());
+        auto *address = picker->findChild<QQuickItem *>("folderAddress");
+        QVERIFY(address);
+        address->setProperty("text", original + "/missing");
+        QVERIFY(click("acceptFolder"));
+        QVERIFY(picker->property("visible").toBool());
+        QVERIFY(!picker->property("error").toString().isEmpty());
+        address->setProperty("text", child);
+        address->forceActiveFocus();
+        QTest::keyClick(view, Qt::Key_Return);
+        QCOMPARE(picker->property("currentPath").toString(), child);
+        QVERIFY(click("folderUp"));
+        QCOMPARE(picker->property("currentPath").toString(), original);
+        auto *list = picker->findChild<QQuickItem *>("folderList");
+        QVERIFY(list);
+        QTRY_COMPARE(model->property("count").toInt(), 1);
+        list->setProperty("currentIndex", 0);
+        list->forceActiveFocus();
+        QTest::keyClick(view, Qt::Key_Return);
+        QCOMPARE(picker->property("currentPath").toString(), child);
+        QTRY_COMPARE(model->property("count").toInt(), 0);
+        if (!qEnvironmentVariable("HWS_TEST_FOLDER_SCREENSHOT").isEmpty())
+            QVERIFY(view->grabWindow().save(qEnvironmentVariable("HWS_TEST_FOLDER_SCREENSHOT")));
+        QVERIFY(click("acceptFolder"));
+        QTRY_VERIFY(!picker->property("visible").toBool());
+        QCOMPARE(root->findChild<QQuickItem *>("wallpaperFolder")->property("text").toString(),
+                 child);
+        QCOMPARE(backend->settings()["folder"].toString(), original);
+        QVERIFY(click("cancelSettings"));
+        QTRY_VERIFY(!root->property("settingsOpen").toBool());
+        QCOMPARE(backend->settings()["folder"].toString(), original);
+        QVERIFY(QMetaObject::invokeMethod(root, "openSettings"));
+        QTest::qWait(280);
+        QVERIFY(click("browseFolder"));
+        QTRY_VERIFY(picker->property("opened").toBool());
+        address->setProperty("text", child);
+        QVERIFY(click("acceptFolder"));
+        QTRY_VERIFY(!picker->property("visible").toBool());
+        QVERIFY(click("saveSettings"));
+        QTRY_VERIFY(!root->property("settingsOpen").toBool());
+        QCOMPARE(backend->settings()["folder"].toString(), child);
+        QTRY_VERIFY(!backend->busy());
+        auto config = backend->settings();
+        config["folder"] = original;
+        QVERIFY(backend->saveSettings(config));
+        QTRY_VERIFY(!backend->busy());
+        QVERIFY(QMetaObject::invokeMethod(root, "openSettings"));
+        QTest::qWait(280);
+        QVERIFY(click("browseFolder"));
+        QTRY_VERIFY(picker->property("opened").toBool());
+        view->resize(960, 540);
+        QTest::qWait(200);
+        auto *content = picker->property("contentItem").value<QQuickItem *>();
+        QVERIFY(content);
+        const QRectF bounds = content->mapRectToScene(content->boundingRect());
+        QVERIFY(bounds.left() >= 0 && bounds.top() >= 0);
+        QVERIFY(bounds.right() <= view->width() && bounds.bottom() <= view->height());
+        backend->hide();
+        QTRY_VERIFY(!picker->property("visible").toBool());
+        view->resize(1280, 800);
+        backend->toggle();
+        QTest::qWait(180);
+        QVERIFY(!root->property("settingsOpen").toBool());
+        QCOMPARE(qGuiApp->allWindows().size(), windows);
+    }
     void videoPreview() {
         auto *root = view->rootObject();
         root->setProperty("selected", 0);
