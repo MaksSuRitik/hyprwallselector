@@ -31,16 +31,26 @@ class WindowsUiTest : public QObject {
         QVERIFY(priority); QVERIFY(priority->isVisible());
         QVERIFY(priority->height()>=48);
         QVERIFY(priority->width()>300);
+        auto *lockScreen=root->findChild<QQuickItem *>("lockScreenSetting");
+        QVERIFY(lockScreen);
+        panel->setProperty("tab", 2);
+        QTest::qWait(100);
+        QVERIFY(lockScreen->isVisible());
+        QVERIFY(lockScreen->height()>=48);
+        panel->setProperty("tab", 0);
+        QTest::qWait(100);
         const auto screenshot=view.grabWindow();
         QVERIFY(!screenshot.isNull());
         QVERIFY(screenshot.save(qEnvironmentVariable("HWS_TEST_UI_CAPTURE","settings-test.png")));
         // Exercise the actual settings save callback in the isolated controller.
         QVERIFY(QMetaObject::invokeMethod(panel,"setDraft",Q_ARG(QVariant,"highPriority"),Q_ARG(QVariant,true)));
+        QVERIFY(QMetaObject::invokeMethod(panel,"setDraft",Q_ARG(QVariant,"syncLockScreen"),Q_ARG(QVariant,false)));
         auto *save=root->findChild<QObject *>("saveSettings");
         QVERIFY(save);
         QVERIFY(QMetaObject::invokeMethod(save,"clicked"));
         QTRY_VERIFY(!root->property("settingsOpen").toBool());
         QVERIFY(backend.settings()["highPriority"].toBool());
+        QVERIFY(!backend.settings()["syncLockScreen"].toBool());
         QVERIFY(backend.visible());
         QVERIFY(QMetaObject::invokeMethod(root,"openSettings"));
         QTest::qWait(300);

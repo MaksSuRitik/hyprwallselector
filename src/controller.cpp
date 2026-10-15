@@ -150,7 +150,10 @@ Controller::Controller(bool sandbox, QObject *parent) : QObject(parent), m_sandb
     load();
 #ifdef Q_OS_WIN
     if (!m_sandbox) {
+        m_startupTimer.start();
         m_windows = new WindowsPlatform(this);
+        m_lockScreen.setEnabled(m_config["syncLockScreen"].toBool());
+        connect(&m_lockScreen, &WindowsLockScreen::failed, this, &Controller::reportError);
         if (!WindowsPlatform::setHighPriority(m_config["highPriority"].toBool()))
             setStatus(text("priorityError"));
         connect(m_windows, &WindowsPlatform::activated, this, &Controller::activated);
@@ -158,6 +161,8 @@ Controller::Controller(bool sandbox, QObject *parent) : QObject(parent), m_sandb
         connect(m_windows, &WindowsPlatform::desktopLost, this, [this] {
             qDeleteAll(m_wallpapers);
             m_wallpapers.clear();
+            m_desktopRetries = 0;
+            m_reconnect.setInterval(200);
             m_reconnect.start();
         });
     }
@@ -174,7 +179,7 @@ Controller::Controller(bool sandbox, QObject *parent) : QObject(parent), m_sandb
     m_refresh.setSingleShot(true);
     m_refresh.setInterval(70);
     connect(&m_refresh, &QTimer::timeout, this, &Controller::refreshEnvironment);
-    m_reconnect.setInterval(3000);
+    m_reconnect.setInterval(isWindows() ? 200 : 3000);
     connect(&m_reconnect, &QTimer::timeout, this, &Controller::watchHyprland);
     connect(&m_events, &QLocalSocket::connected, this, [this] {
         m_reconnect.stop();
@@ -262,6 +267,7 @@ void Controller::load() {
     for (auto it = stored.begin(); it != stored.end(); ++it)
         m_config[it.key()] = it.value();
 #ifdef Q_OS_WIN
+    if (!stored.contains("syncLockScreen")) m_config["syncLockScreen"] = true;
     if (!stored.contains("highPriority")) m_config["highPriority"] = false;
     if (!stored.contains("shortcut")) m_config["shortcut"] = "Alt+T";
     if (!stored.contains("manageBackground")) m_config["manageBackground"] = true;
@@ -311,7 +317,6 @@ void Controller::attach(QQuickView *view) {
     view->installEventFilter(this);
 }
 void Controller::start(bool show) {
-    scan();
     if (!m_sandbox) {
 #ifdef Q_OS_WIN
 
@@ -333,11 +338,14 @@ void Controller::start(bool show) {
         refreshSession();
         registerHotkey();
         watchHyprland();
-        if (m_config["manageBackground"].toBool() && m_config["renderer"].toString() != "end4")
+        if (!isWindows() && m_config["manageBackground"].toBool() && m_config["renderer"].toString() != "end4")
             for (auto *s : qGuiApp->screens())
                 createWallpaper(s);
     } else
         m_locked = false;
+    // Restore the selected wallpaper before competing with thumbnail generation.
+    if (isWindows()) QTimer::singleShot(show ? 0 : 1200, this, &Controller::scan);
+    else scan();
     if (show)
         toggle();
 }
@@ -422,6 +430,7 @@ void Controller::setStatus(const QString &value) {
 }
 void Controller::reportError(QString message) {
     setStatus(message);
+    emit errorReported(message);
 }
 QString Controller::filePath(QString url) const {
     return localPath(url);
@@ -485,6 +494,13 @@ bool Controller::saveSettings(QVariantMap values) {
         registerHotkey();
     if (!m_sandbox) {
 #ifdef Q_OS_WIN
+        m_lockScreen.setEnabled(next["syncLockScreen"].toBool());
+        if (next["syncLockScreen"].toBool()) {
+            auto *primary = qGuiApp->primaryScreen();
+            auto saved = m_state.value(primary->name()).toObject();
+            if (saved.isEmpty()) saved = m_state.value("ALL").toObject();
+            m_lockScreen.request(saved["path"].toString(), saved["video"].toBool());
+        }
         if (!WindowsPlatform::setAutostart(next["autostart"].toBool()))
             setStatus(text("saveError"));
         if (!WindowsPlatform::setHighPriority(next["highPriority"].toBool()))
@@ -569,6 +585,15 @@ void Controller::apply(int index) {
         return;
     }
     m_allRequest = target == "ALL" ? path : QString();
+#ifdef Q_OS_WIN
+    for (auto *screen : qGuiApp->screens())
+        if (target == "ALL" || target == screen->name()) m_requestedPaths[screen->name()] = path;
+    watchHyprland();
+    if (m_wallpapers.isEmpty()) {
+        setStatus(m_windows->desktopError() + " The selection will be retried automatically.");
+        return;
+    }
+#endif
     emit wallpaperRequested(target, path, entry["video"].toBool());
     hide();
 }
@@ -586,6 +611,12 @@ void Controller::wallpaperReady(QString screen, QString path) {
         m_state["ALL"] = m_state[screen];
     saveState();
     emit currentChanged();
+#ifdef Q_OS_WIN
+    if (!m_sandbox) {
+        if (m_firstWallpaperMs < 0) m_firstWallpaperMs = m_startupTimer.elapsed();
+        if (screen == qGuiApp->primaryScreen()->name()) m_lockScreen.request(path, videoFile(path));
+    }
+#endif
 }
 void Controller::syncPalette() {
     for (auto *screen : qGuiApp->screens()) {
@@ -626,8 +657,8 @@ void Controller::createWallpaper(QScreen *screen) {
     if (!m_windows || !m_windows->attachWallpaper(view, screen)) {
         m_wallpapers.removeOne(view);
         delete view;
-        setStatus("Windows desktop is not ready. Wallpapers will retry automatically.");
-        m_reconnect.start();
+        setStatus(m_windows ? m_windows->desktopError() : "Windows integration is unavailable.");
+        if (!m_reconnect.isActive()) m_reconnect.start();
         return;
     }
 #else
@@ -637,9 +668,12 @@ void Controller::createWallpaper(QScreen *screen) {
     if (saved.isEmpty())
         saved = m_state["ALL"].toObject();
     QString path = saved["path"].toString();
+#ifdef Q_OS_WIN
+    if (m_requestedPaths.contains(screen->name())) path = m_requestedPaths.value(screen->name());
+#endif
     if (QFileInfo(path).isReadable())
-        QTimer::singleShot(0, this, [this, screen, path] {
-            emit wallpaperRequested(screen->name(), path, videoFile(path));
+        QTimer::singleShot(0, view, [this, name = screen->name(), path] {
+            emit wallpaperRequested(name, path, videoFile(path));
         });
 }
 void Controller::refreshSession() {
@@ -708,7 +742,10 @@ void Controller::watchHyprland() {
 #ifdef Q_OS_WIN
     if (m_windows && m_config["manageBackground"].toBool())
         for (auto *screen : qGuiApp->screens()) createWallpaper(screen);
-    if (m_wallpapers.size() == qGuiApp->screens().size()) m_reconnect.stop();
+    if (m_wallpapers.size() == qGuiApp->screens().size()) {
+        if (m_desktopRetries > 0) setStatus("");
+        m_reconnect.stop(); m_desktopRetries = 0;
+    } else if (++m_desktopRetries > 25) m_reconnect.setInterval(3000);
 #else
     QString runtime = qEnvironmentVariable("XDG_RUNTIME_DIR");
     QString sig = qEnvironmentVariable("HYPRLAND_INSTANCE_SIGNATURE");
@@ -789,6 +826,9 @@ QString Controller::diagnostic() const {
                                   {"currentPath", currentPath()},
 #ifdef Q_OS_WIN
                                   {"desktopAttached", m_windows ? m_windows->attachedCount() : 0},
+                                  {"desktop", m_windows ? QJsonObject::fromVariantMap(m_windows->diagnostic()) : QJsonObject()},
+                                  {"firstWallpaperMs", m_firstWallpaperMs},
+                                  {"lockScreen", m_lockScreen.status()},
                                   {"onBattery", m_battery},
                                   {"displayOff", m_windows && m_windows->displayOff()},
                                   {"videoFrames", qint64(MediaItem::deliveredFrames())},
@@ -812,6 +852,9 @@ QString Controller::diagnostic() const {
 QString Controller::text(QString key) const {
 #ifdef Q_OS_WIN
     static const QMap<QString, QStringList> winWords = {
+        {"diagnostics", {"Save diagnostic report", "Зберегти діагностику", "Сохранить диагностику"}},
+        {"syncLockScreen", {"Use wallpaper on the lock screen", "Шпалери на екрані блокування", "Обои на экране блокировки"}},
+        {"lockScreenHint", {"Uses an image or a still frame from the video. Applies to your Windows account.", "Зображення або стоп-кадр із відео для вашого облікового запису Windows.", "Картинка или стоп-кадр из видео для вашей учётной записи Windows."}},
         {"highPriority", {"High priority at startup", "Високий пріоритет при запуску", "Высокий приоритет при запуске"}},
         {"priorityHint", {"Recommended if the selector responds slowly under CPU load. Applies now and at subsequent starts.", "Рекомендовано, якщо селектор повільно реагує під навантаженням CPU. Діє зараз і при наступних запусках.", "Рекомендуется, если селектор медленно реагирует при нагрузке CPU. Действует сейчас и при следующих запусках."}},
         {"priorityError", {"Windows could not change the process priority.", "Windows не вдалося змінити пріоритет процесу.", "Windows не удалось изменить приоритет процесса."}},
@@ -1011,6 +1054,11 @@ bool Controller::applyFile(QString path) {
     QString target = m_config["monitor"].toString("ALL");
     if (target != "ALL" && !screens().contains(target)) return false;
     m_allRequest = target == "ALL" ? path : QString();
+#ifdef Q_OS_WIN
+    for (auto *screen : qGuiApp->screens())
+        if (target == "ALL" || target == screen->name()) m_requestedPaths[screen->name()] = path;
+    watchHyprland();
+#endif
     emit wallpaperRequested(target, path, videoFile(path));
     return true;
 }

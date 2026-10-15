@@ -3,6 +3,7 @@
 #include "dmspalette.h"
 #ifdef Q_OS_WIN
 #include "windowsplatform.h"
+#include "windowslockscreen.h"
 #endif
 #include <QElapsedTimer>
 #include <QFileSystemWatcher>
@@ -27,6 +28,11 @@ class Controller final : public QObject {
     DmsPalette m_palette;
 #ifdef Q_OS_WIN
     WindowsPlatform *m_windows = nullptr;
+    WindowsLockScreen m_lockScreen;
+    QElapsedTimer m_startupTimer;
+    qint64 m_firstWallpaperMs = -1;
+    QHash<QString, QString> m_requestedPaths;
+    int m_desktopRetries = 0;
 #endif
     bool m_manualPause = false;
     QVariantList m_items;
@@ -122,6 +128,7 @@ class Controller final : public QObject {
     }
     Q_INVOKABLE QString diagnostic() const;
   signals:
+    void errorReported(const QString &message);
     void updateRequested();
     void shortcutCaptured(QString codes, QString label);
     void itemsChanged();

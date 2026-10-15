@@ -10,6 +10,12 @@ No Python, MSYS2, administrator account or external hotkey tool is required to u
 * The tray menu opens the selector, pauses video or exits.
 * The installer enables **Start at login** by default. The background process restores
   the last wallpaper and listens for Alt+T. Disable it in Settings if preferred.
+  It uses a per-user Task Scheduler logon task with no delay or elevated privileges,
+  so it does not wait in Explorer's delayed Run queue. If policy blocks task creation,
+  it falls back to the Run key. The installer migrates previous Run entries.
+* **Use wallpaper on the lock screen** syncs the primary monitor's image, or a still
+  frame of its video, through Windows' personalization API. This is enabled by default
+  and can be disabled independently. Video playback on the Windows lock screen is not supported.
 * **High priority at startup** is an optional checkbox in Settings. Recommended if
   CPU load delays the selector. It applies immediately and persists across starts;
   it changes this app's CPU scheduling priority, not GPU priority or video quality.
@@ -30,10 +36,16 @@ No Python, MSYS2, administrator account or external hotkey tool is required to u
 The wallpaper uses Explorer's desktop host, supporting both the classic WorkerW layout
 and the newer Windows 11 raised desktop layout. This interface is not a public Windows API;
 future Explorer changes may need an update. Failure to find the host hides the wallpaper and
-retries instead of displaying a blocking top-level window. Use one live wallpaper app at a time.
+retries instead of displaying a blocking top-level window. Pending selections survive
+desktop reconnect attempts. Use one live wallpaper app at a time.
+If a PC cannot apply wallpapers, use **Save diagnostic report** in the tray menu.
+The JSON includes Windows version, Explorer layout, window geometry, decoder counters,
+startup timing and errors. It also contains your local wallpaper paths; it is saved
+locally and is never uploaded automatically.
 
 Windows does not have DMS, end-4 or Hyprland. Their shell/lock-screen palette integration is
-available only in the Linux edition. Windows lock-screen configuration is left unchanged.
+available only in the Linux edition. Lock-screen image sync is separate from those integrations;
+Windows policy can deny personalization, in which case the app reports the error.
 The installer is currently unsigned.
 
 ## Updates and releases
@@ -50,8 +62,8 @@ To publish from the Windows source branch after testing:
 
 ```sh
 git push origin windows-port
-git tag windows-v0.3.0
-git push origin windows-v0.3.0
+git tag windows-v0.3.1
+git push origin windows-v0.3.1
 ```
 
 Use a new increasing version each time. `.github/workflows/windows-release.yml` builds and
@@ -82,7 +94,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake \
 
 Run `packaging/windows/build.ps1` in PowerShell with `-QtRoot C:\msys64\ucrt64`,
 `-BuildRoot C:\build\hws`, `-OutputRoot C:\build\release` and optionally
-`-InnoCompiler "C:\path\to\ISCC.exe" -Version 0.3.0`. Each bundle is assembled in a new directory.
+`-InnoCompiler "C:\path\to\ISCC.exe" -Version 0.3.1`. Each bundle is assembled in a new directory.
 The script scans PE dependencies recursively and rejects missing libraries.
 Keep the included licenses and source archive with redistributions.
 
@@ -92,3 +104,6 @@ For the opt-in GPU integration test, set `HWS_TEST_VIDEO_FOLDER` to a directory 
 videos and run `test-nativevideo.exe`. It checks moving frames, pause/resume, source
 changes, concurrent preview, teardown and missing files. `HWS_TEST_DWELL` (milliseconds)
 and `HWS_TEST_CYCLES` extend the run; `HWS_TEST_REPORT` sets its JSON measurement path.
+`HWS_TEST_DESKTOP=1` enables an Explorer attachment test in `test-windows.exe`.
+`HWS_TEST_LOCKSCREEN_IMAGE` enables a real personalization API test using the supplied
+image (it changes the lock screen). Both are opt-in and are skipped in normal CI.

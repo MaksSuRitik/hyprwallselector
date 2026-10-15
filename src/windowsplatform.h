@@ -42,6 +42,8 @@ class WindowsPlatform final : public QObject, public QAbstractNativeEventFilter 
     static QSize displayPixelSize();
     static bool covers(const QRect &window, const QRect &monitor);
     static bool shortcutParts(const QString &sequence, UINT &modifiers, UINT &key);
+    QVariantMap diagnostic() const;
+    QString desktopError() const { return m_desktopError; }
     bool nativeEventFilter(const QByteArray &, void *message, qintptr *result) override;
   signals:
     void activated();
@@ -58,8 +60,11 @@ class WindowsPlatform final : public QObject, public QAbstractNativeEventFilter 
     int m_hotkeyId = 0;
     quint64 m_hotkeyHits = 0;
     QString m_shortcut;
+    QString m_desktopError;
     QList<QPointer<QQuickView>> m_views;
     bool findDesktop();
+    bool locateDesktop();
+    void maintainDesktopOrder();
     void poll();
-    void positionWallpaper(QQuickView *view, QScreen *screen);
+    bool positionWallpaper(QQuickView *view, QScreen *screen);
 };

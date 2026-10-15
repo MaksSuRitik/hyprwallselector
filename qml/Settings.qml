@@ -469,6 +469,15 @@ Rectangle {
                     enabled: panel.draft.renderer !== "end4"
                     onToggled: panel.setDraft("syncDmsColors", checked)
                 }
+                SettingsToggle {
+                    Layout.fillWidth: true
+                    visible: backend.windows
+                    objectName: "lockScreenSetting"
+                    text: panel.tr("syncLockScreen")
+                    detail: panel.tr("lockScreenHint")
+                    checked: panel.draft.syncLockScreen || false
+                    onToggled: panel.setDraft("syncLockScreen", checked)
+                }
                 Text {
                     Layout.fillWidth: true
                     text: panel.tr("dmsHint")

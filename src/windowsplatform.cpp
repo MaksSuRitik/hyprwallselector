@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "windowsplatform.h"
+#include "windowsstartup.h"
 #include <QCoreApplication>
 #include <QCursor>
 #include <QDir>
@@ -8,13 +9,13 @@
 #include <QQuickView>
 #include <QScreen>
 #include <QSettings>
+#include <QSysInfo>
 #include <dwmapi.h>
 #include <wtsapi32.h>
 #include <psapi.h>
 #include <vector>
 
 namespace {
-const wchar_t *runKey = L"HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 constexpr GUID displayState{0x6fe69556, 0x704a, 0x47a0, {0x8f,0x24,0xc2,0x8d,0x93,0x6f,0xda,0x47}};
 QRect rect(const RECT &r) { return {r.left, r.top, r.right-r.left, r.bottom-r.top}; }
 MONITORINFOEXW monitorInfo(QScreen *screen) {
@@ -122,8 +123,8 @@ bool WindowsPlatform::nativeEventFilter(const QByteArray &, void *message, qintp
         }
         emit environmentChanged();
     } else if (msg->message == m_taskbarMessage) {
-        m_host = nullptr;
-        emit desktopLost();
+        // DPI and taskbar changes can also broadcast TaskbarCreated.
+        if (!desktopReady()) { m_host = nullptr; emit desktopLost(); }
     }
     return false;
 }
@@ -152,10 +153,20 @@ bool WindowsPlatform::covered(QScreen *screen) const {
 }
 bool WindowsPlatform::findDesktop() {
     m_progman = FindWindowW(L"Progman", nullptr);
-    if (!m_progman) return false;
+    if (!m_progman) { m_desktopError = "Explorer has not created Progman yet."; return false; }
     GetWindowThreadProcessId(m_progman, &m_explorerPid);
+    if (locateDesktop()) return true;
     DWORD_PTR result = 0;
     SendMessageTimeoutW(m_progman, 0x052c, 0xD, 1, SMTO_ABORTIFHUNG, 750, &result);
+    if (locateDesktop()) return true;
+    // Older Explorer builds use the original message parameters. Do not force
+    // this path when a valid raised desktop already exists.
+    SendMessageTimeoutW(m_progman, 0x052c, 0, 0, SMTO_ABORTIFHUNG, 750, &result);
+    if (locateDesktop()) return true;
+    m_desktopError = "Explorer wallpaper layer is unavailable; waiting for WorkerW.";
+    return false;
+}
+bool WindowsPlatform::locateDesktop() {
     m_icons = FindWindowExW(m_progman, nullptr, L"SHELLDLL_DefView", nullptr);
     m_worker = FindWindowExW(m_progman, nullptr, L"WorkerW", nullptr);
     m_raised = m_icons && m_worker && (GetWindowLongPtrW(m_progman, GWL_EXSTYLE) & WS_EX_NOREDIRECTIONBITMAP);
@@ -164,10 +175,13 @@ bool WindowsPlatform::findDesktop() {
         m_host = nullptr;
         EnumWindows([](HWND top, LPARAM data)->BOOL {
             auto *self = reinterpret_cast<WindowsPlatform *>(data);
+            DWORD owner = 0; GetWindowThreadProcessId(top, &owner);
+            if (owner != self->m_explorerPid) return TRUE;
             if (HWND icons = FindWindowExW(top, nullptr, L"SHELLDLL_DefView", nullptr)) {
                 HWND worker = FindWindowExW(nullptr, top, L"WorkerW", nullptr);
                 DWORD pid = 0; GetWindowThreadProcessId(worker, &pid);
-                if (worker && pid == self->m_explorerPid) {
+                if (worker && pid == self->m_explorerPid && IsWindowVisible(worker) &&
+                    !FindWindowExW(worker, nullptr, L"SHELLDLL_DefView", nullptr)) {
                     self->m_icons = icons; self->m_host = self->m_worker = worker;
                     return FALSE;
                 }
@@ -175,46 +189,68 @@ bool WindowsPlatform::findDesktop() {
             return TRUE;
         }, reinterpret_cast<LPARAM>(this));
     }
-    return desktopReady();
+    if (!desktopReady()) return false;
+    m_desktopError.clear();
+    return true;
 }
 bool WindowsPlatform::desktopReady() const {
     DWORD pid = 0;
     return m_host && IsWindow(m_host) && IsWindow(m_icons) &&
            GetWindowThreadProcessId(m_host, &pid) && pid == m_explorerPid &&
-           m_progman == FindWindowW(L"Progman", nullptr);
+           IsWindow(m_worker) && m_progman == FindWindowW(L"Progman", nullptr) &&
+           (!m_raised || (GetParent(m_icons) == m_host && GetParent(m_worker) == m_host &&
+                         (GetWindowLongPtrW(m_icons, GWL_EXSTYLE) & WS_EX_LAYERED)));
 }
 bool WindowsPlatform::attachWallpaper(QQuickView *view, QScreen *screen) {
     if (!desktopReady() && !findDesktop()) return false;
     auto *parent = QWindow::fromWinId(reinterpret_cast<WId>(m_host));
     if (!parent) return false;
     parent->QObject::setParent(this);
+    connect(view, &QObject::destroyed, parent, &QObject::deleteLater);
     view->setParent(parent);
     view->setFlags(Qt::SubWindow | Qt::FramelessWindowHint | Qt::WindowTransparentForInput | Qt::WindowDoesNotAcceptFocus);
     const HWND handle = reinterpret_cast<HWND>(view->winId());
-    if (GetParent(handle) != m_host) { view->hide(); return false; }
+    if (GetParent(handle) != m_host) {
+        m_desktopError = QString("Explorer rejected wallpaper parenting (%1).").arg(GetLastError());
+        view->hide(); return false;
+    }
     SetWindowLongPtrW(handle, GWL_EXSTYLE, GetWindowLongPtrW(handle, GWL_EXSTYLE) | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT);
     if (m_raised) {
         SetWindowLongPtrW(handle, GWL_EXSTYLE, GetWindowLongPtrW(handle, GWL_EXSTYLE) | WS_EX_LAYERED);
-        SetLayeredWindowAttributes(handle, 0, 255, LWA_ALPHA);
+        if (!SetLayeredWindowAttributes(handle, 0, 255, LWA_ALPHA)) {
+            m_desktopError = QString("Cannot enable the Explorer wallpaper layer (%1).").arg(GetLastError());
+            view->hide(); return false;
+        }
     }
     view->show();
-    positionWallpaper(view, screen);
+    if (!positionWallpaper(view, screen)) { view->hide(); return false; }
     m_views << view;
     connect(screen, &QScreen::geometryChanged, view, [this, view, screen] { positionWallpaper(view, screen); });
     connect(screen, &QScreen::logicalDotsPerInchChanged, view, [this, view, screen] { positionWallpaper(view, screen); });
-    connect(view, &QObject::destroyed, parent, &QObject::deleteLater);
     return true;
 }
-void WindowsPlatform::positionWallpaper(QQuickView *view, QScreen *screen) {
-    if (!desktopReady()) { view->hide(); return; }
+void WindowsPlatform::maintainDesktopOrder() {
+    if (m_raised && desktopReady() && GetWindow(m_host, GW_CHILD) &&
+        GetWindow(m_worker, GW_HWNDNEXT))
+        SetWindowPos(m_worker, HWND_BOTTOM, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+}
+bool WindowsPlatform::positionWallpaper(QQuickView *view, QScreen *screen) {
+    if (!desktopReady()) { view->hide(); return false; }
     auto monitor = monitorInfo(screen);
-    if (!monitor.cbSize) { view->hide(); return; }
+    if (!monitor.cbSize) {
+        m_desktopError = "Cannot locate Windows monitor: " + screen->name();
+        view->hide(); return false;
+    }
     const HWND handle = reinterpret_cast<HWND>(view->winId());
     POINT point{monitor.rcMonitor.left, monitor.rcMonitor.top};
     MapWindowPoints(HWND_DESKTOP, m_host, &point, 1);
-    SetWindowPos(handle, m_raised ? m_icons : HWND_BOTTOM, point.x, point.y,
+    maintainDesktopOrder();
+    const bool positioned = SetWindowPos(handle, m_raised ? m_icons : HWND_BOTTOM, point.x, point.y,
                  monitor.rcMonitor.right-monitor.rcMonitor.left, monitor.rcMonitor.bottom-monitor.rcMonitor.top,
                  SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    if (!positioned) m_desktopError = QString("Cannot position wallpaper (%1).").arg(GetLastError());
+    return positioned;
 }
 int WindowsPlatform::attachedCount() const {
     int count = 0;
@@ -229,6 +265,7 @@ void WindowsPlatform::poll() {
         m_host = nullptr;
         emit desktopLost();
     }
+    maintainDesktopOrder();
     emit environmentChanged();
 }
 void WindowsPlatform::showSelector(QWindow *view) {
@@ -246,17 +283,30 @@ void WindowsPlatform::showSelector(QWindow *view) {
     SetForegroundWindow(handle);
 }
 bool WindowsPlatform::autostartEnabled() {
-    return QSettings(QString::fromWCharArray(runKey), QSettings::NativeFormat).contains("Hyprwallselector");
+    return WindowsStartup::enabled();
 }
 bool WindowsPlatform::setHighPriority(bool enabled) {
     return SetPriorityClass(GetCurrentProcess(), enabled ? HIGH_PRIORITY_CLASS : NORMAL_PRIORITY_CLASS);
 }
 bool WindowsPlatform::setAutostart(bool enabled) {
-    QSettings settings(QString::fromWCharArray(runKey), QSettings::NativeFormat);
-    if (enabled) settings.setValue("Hyprwallselector", '"' + QDir::toNativeSeparators(QCoreApplication::applicationFilePath()) + "\" --daemon");
-    else settings.remove("Hyprwallselector");
-    settings.sync();
-    return settings.status() == QSettings::NoError;
+    return WindowsStartup::setEnabled(enabled);
+}
+QVariantMap WindowsPlatform::diagnostic() const {
+    auto window = [](HWND hwnd) {
+        RECT r{}; GetWindowRect(hwnd, &r);
+        wchar_t klass[128]{}; GetClassNameW(hwnd, klass, 128);
+        return QVariantMap{{"handle", QString::number(quintptr(hwnd), 16)}, {"class", QString::fromWCharArray(klass)},
+            {"style", QString::number(quintptr(GetWindowLongPtrW(hwnd, GWL_STYLE)), 16)},
+            {"extendedStyle", QString::number(quintptr(GetWindowLongPtrW(hwnd, GWL_EXSTYLE)), 16)},
+            {"visible", bool(IsWindowVisible(hwnd))}, {"x", int(r.left)}, {"y", int(r.top)},
+            {"width", int(r.right-r.left)}, {"height", int(r.bottom-r.top)}};
+    };
+    QVariantList views;
+    for (const auto &view : m_views) if (view) views << window(reinterpret_cast<HWND>(view->winId()));
+    return {{"windows", QSysInfo::prettyProductName()}, {"kernel", QSysInfo::kernelVersion()},
+        {"layout", m_raised ? "raised" : "classic"}, {"ready", desktopReady()},
+        {"error", m_desktopError}, {"autostart", WindowsStartup::method()},
+        {"progman", window(m_progman)}, {"worker", window(m_worker)}, {"icons", window(m_icons)}, {"views", views}};
 }
 QVariantMap WindowsPlatform::memoryStats() {
     PROCESS_MEMORY_COUNTERS_EX memory{};

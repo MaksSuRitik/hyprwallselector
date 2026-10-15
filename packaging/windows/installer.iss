@@ -2,7 +2,7 @@
  #error BundleDir must point to the deployed application directory
 #endif
 #ifndef AppVersion
- #define AppVersion "0.3.0"
+ #define AppVersion "0.3.1"
 #endif
 #ifndef OutputDir
  #define OutputDir "."
@@ -47,9 +47,6 @@ Source: "{#BundleDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs 
 Name: "{autoprograms}\Hyprwallselector"; Filename: "{app}\hyprwallselector.exe"
 Name: "{autodesktop}\Hyprwallselector"; Filename: "{app}\hyprwallselector.exe"; Tasks: desktopicon
 
-[Registry]
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Hyprwallselector"; ValueData: """{app}\hyprwallselector.exe"" --daemon"; Tasks: autostart; Flags: uninsdeletevalue
-
 [Run]
 Filename: "{app}\hyprwallselector.exe"; Description: "Launch Hyprwallselector"; Flags: nowait postinstall skipifsilent
 Filename: "{app}\hyprwallselector.exe"; Parameters: "--daemon"; Flags: nowait runhidden; Check: IsUpdate
@@ -83,15 +80,24 @@ begin
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
+var
+  Code: Integer;
+  Mode: String;
 begin
-  if (CurStep = ssPostInstall) and not WizardIsTaskSelected('autostart') then
-    RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Hyprwallselector');
+  if CurStep = ssPostInstall then begin
+    if WizardIsTaskSelected('autostart') then Mode := 'on' else Mode := 'off';
+    if not Exec(ExpandConstant('{app}\hyprwallselector.exe'), '--autostart ' + Mode, '', SW_HIDE, ewWaitUntilTerminated, Code) or (Code <> 0) then
+      Log('Could not configure Hyprwallselector autostart');
+  end;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  Code: Integer;
 begin
   if CurUninstallStep = usUninstall then begin
     StopApp;
+    Exec(ExpandConstant('{app}\hyprwallselector.exe'), '--autostart off', '', SW_HIDE, ewWaitUntilTerminated, Code);
     RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Hyprwallselector');
   end;
 end;

@@ -11,6 +11,16 @@ Item {
     property bool fallback: false
     signal failed(string message)
     onSourceChanged: fallback = false
+    Timer {
+        // Some drivers accept a decoder but never deliver its first frame.
+        // Move to Qt Multimedia instead of leaving a permanent poster.
+        interval: 3000
+        running: surface.source !== "" && !surface.ready && !surface.fallback
+        onTriggered: {
+            console.warn("Native decoder first frame timed out; trying compatible decoder");
+            surface.fallback = true;
+        }
+    }
     Loader {
         id: player
         anchors.fill: parent

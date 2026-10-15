@@ -1,10 +1,42 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "windowsplatform.h"
+#include "windowslockscreen.h"
+#include <QGuiApplication>
+#include <QQuickView>
 #include <QtTest>
+#include <thread>
 
 class WindowsTest : public QObject {
     Q_OBJECT
   private slots:
+    void desktopAttachment() {
+        if (!qEnvironmentVariableIsSet("HWS_TEST_DESKTOP")) QSKIP("Opt-in Explorer integration test");
+        WindowsPlatform platform;
+        QQuickView view;
+        view.setColor(Qt::transparent);
+        view.setScreen(qGuiApp->primaryScreen());
+        QVERIFY2(platform.attachWallpaper(&view, view.screen()), qPrintable(platform.desktopError()));
+        QCOMPARE(platform.attachedCount(), 1);
+        auto handle = reinterpret_cast<HWND>(view.winId());
+        QVERIFY(GetParent(handle));
+        QVERIFY(IsWindowVisible(handle));
+        QVERIFY(GetWindowLongPtrW(handle, GWL_STYLE) & WS_CHILD);
+        QVERIFY(!(GetWindowLongPtrW(handle, GWL_EXSTYLE) & WS_EX_TOPMOST));
+        RECT bounds{};
+        QVERIFY(GetWindowRect(handle, &bounds));
+        QVERIFY(bounds.right > bounds.left && bounds.bottom > bounds.top);
+        auto data = platform.diagnostic();
+        QVERIFY(data["ready"].toBool());
+    }
+    void lockScreenApi() {
+        const QString image = qEnvironmentVariable("HWS_TEST_LOCKSCREEN_IMAGE");
+        if (image.isEmpty()) QSKIP("Opt-in actual lock screen image test");
+        // The test process may have an STA UI thread; production uses an MTA worker.
+        QString result;
+        std::thread worker([&] { result = WindowsLockScreen::setImage(image); });
+        worker.join();
+        QVERIFY2(result.isEmpty(), qPrintable(result));
+    }
     void processPriority() {
         const DWORD original=GetPriorityClass(GetCurrentProcess());
         struct Restore { DWORD value; ~Restore() { SetPriorityClass(GetCurrentProcess(),value); } } restore{original};

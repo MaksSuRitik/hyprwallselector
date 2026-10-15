@@ -13,6 +13,9 @@
 #include <QProgressDialog>
 #include "updatemanager.h"
 #include "nativevideo.h"
+#include "windowsstartup.h"
+#include <QFileDialog>
+#include <QSaveFile>
 #else
 #include <LayerShellQt/Window>
 #endif
@@ -79,7 +82,17 @@ int main(int argc, char **argv) {
     args.addOption({"pause", "Pause video wallpapers"});
     args.addOption({"resume", "Resume video wallpapers"});
     args.addOption({"check-updates", "Check published Windows releases"});
+#ifdef Q_OS_WIN
+    args.addOption({"autostart", "Configure this user's startup (installer)", "on|off"});
+#endif
     args.process(app);
+#ifdef Q_OS_WIN
+    if (args.isSet("autostart")) {
+        const auto value = args.value("autostart");
+        if (value != "on" && value != "off") return 2;
+        return WindowsStartup::setEnabled(value == "on") ? 0 : 1;
+    }
+#endif
     if (args.isSet("integrate-dms") || args.isSet("restore-dms")) {
         QString error = configureDms(args.isSet("restore-dms"));
         QTextStream(stdout) << (error.isEmpty() ? "DMS wallpaper preference updated." : error)
@@ -181,10 +194,19 @@ int main(int argc, char **argv) {
 #else
     view.resize(app.primaryScreen()->size());
 #endif
-    view.setSource(QUrl("qrc:/qml/Main.qml"));
-    if (qEnvironmentVariableIsSet("HWS_DEBUG")) qInfo("Startup: QML ready");
-    if (view.status() == QQuickView::Error)
-        return 1;
+    // A hidden login launch only needs Wallpaper.qml. Build the carousel on
+    // first activation instead of delaying the first desktop frame with it.
+    auto loadSelector = [&] {
+        if (view.status() != QQuickView::Null) return;
+        view.setSource(QUrl("qrc:/qml/Main.qml"));
+        if (view.status() == QQuickView::Error)
+            backend.reportError("Cannot load the selector interface.");
+        if (qEnvironmentVariableIsSet("HWS_DEBUG")) qInfo("Selector: QML ready");
+    };
+    QObject::connect(&backend, &Controller::visibleChanged, &view, [&] {
+        if (backend.visible()) loadSelector();
+    });
+    if (preview || !backend.isWindows()) loadSelector();
     QLocalServer server;
     server.setSocketOptions(QLocalServer::UserAccessOption);
     if (!preview) {
@@ -255,6 +277,16 @@ int main(int argc, char **argv) {
         box->setAttribute(Qt::WA_DeleteOnClose);
         box->open();
     };
+    auto *diagnostics = trayMenu.addAction(backend.text("diagnostics"));
+    QObject::connect(diagnostics, &QAction::triggered, &app, [&] {
+        backend.hide();
+        const QString path = QFileDialog::getSaveFileName(nullptr, backend.text("diagnostics"),
+            QStandardPaths::writableLocation(QStandardPaths::DesktopLocation) + "/Hyprwallselector-diagnostic.json", "JSON (*.json)");
+        if (path.isEmpty()) return;
+        QSaveFile report(path);
+        if (!report.open(QIODevice::WriteOnly) || report.write(backend.diagnostic().toUtf8()) < 0 || !report.commit())
+            inform(backend.text("saveError"));
+    });
     QPointer<QProgressDialog> downloadProgress;
     QObject::connect(&updates, &UpdateManager::checked, &app, [&](bool manual, const QString &error) {
         updateAction->setEnabled(true);
@@ -299,6 +331,9 @@ int main(int argc, char **argv) {
         if (reason == QSystemTrayIcon::Trigger) backend.toggle();
     });
     if (!preview) tray.show();
+    QObject::connect(&backend, &Controller::errorReported, &tray, [&](const QString &message) {
+        if (!preview && !backend.visible()) tray.showMessage("Hyprwallselector", message, QSystemTrayIcon::Warning);
+    });
 #endif
     backend.start(!args.isSet("daemon") && !args.isSet("wallpaper"));
     if (qEnvironmentVariableIsSet("HWS_DEBUG")) qInfo("Startup: controller started");
