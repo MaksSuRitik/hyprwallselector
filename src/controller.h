@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "dmspalette.h"
+#ifdef Q_OS_WIN
+#include "windowsplatform.h"
+#endif
 #include <QElapsedTimer>
 #include <QFileSystemWatcher>
 #include <QFutureWatcher>
@@ -22,6 +25,10 @@ class Controller final : public QObject {
     Q_PROPERTY(QStringList screens READ screens NOTIFY screensChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     DmsPalette m_palette;
+#ifdef Q_OS_WIN
+    WindowsPlatform *m_windows = nullptr;
+#endif
+    bool m_manualPause = false;
     QVariantList m_items;
     QJsonObject m_config;
     QJsonObject m_state;
@@ -78,6 +85,17 @@ class Controller final : public QObject {
     QStringList screens() const;
     void attach(QQuickView *view);
     void start(bool show);
+    Q_PROPERTY(bool windows READ isWindows CONSTANT)
+    bool isWindows() const {
+#ifdef Q_OS_WIN
+        return true;
+#else
+        return false;
+#endif
+    }
+    Q_INVOKABLE QStringList drives() const;
+    Q_INVOKABLE bool applyFile(QString path);
+    void setManualPause(bool paused);
     Q_INVOKABLE void toggle();
     Q_INVOKABLE void hide();
     Q_INVOKABLE void scan();
@@ -87,6 +105,7 @@ class Controller final : public QObject {
     Q_INVOKABLE void wallpaperReady(QString screen, QString path);
     Q_INVOKABLE void reportError(QString message);
     Q_INVOKABLE QString text(QString key) const;
+    Q_INVOKABLE QString cachedThumbnailUrl(QString path) const;
     Q_INVOKABLE QString filePath(QString url) const;
     Q_INVOKABLE QUrl directoryUrl(QString path) const;
     Q_INVOKABLE QUrl fileUrl(QString path) const {
@@ -97,11 +116,13 @@ class Controller final : public QObject {
     Q_INVOKABLE void setupDms();
     Q_INVOKABLE bool pausedFor(QString screen) const;
     Q_INVOKABLE void quit();
+    Q_INVOKABLE void checkUpdates() { emit updateRequested(); }
     Q_INVOKABLE void captureShortcut(bool active) {
         m_capture = active;
     }
     Q_INVOKABLE QString diagnostic() const;
   signals:
+    void updateRequested();
     void shortcutCaptured(QString codes, QString label);
     void itemsChanged();
     void settingsChanged();
@@ -114,5 +135,5 @@ class Controller final : public QObject {
     void wallpaperRequested(QString screen, QString path, bool video);
   private slots:
     void activated();
-    void sessionChanged(QString interface, QVariantMap changed, QStringList invalidated);
+    void sessionChanged(QString interfaceName, QVariantMap changed, QStringList invalidated);
 };

@@ -1,0 +1,29 @@
+#include <windows.h>
+IDI_ICON1 ICON "app.ico"
+1 VERSIONINFO
+ FILEVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+ PRODUCTVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS 0
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+BEGIN
+ BLOCK "StringFileInfo"
+ BEGIN
+  BLOCK "040904B0"
+  BEGIN
+   VALUE "CompanyName", "Hyprwallselector contributors\0"
+   VALUE "FileDescription", "Hyprwallselector\0"
+   VALUE "FileVersion", "@PROJECT_VERSION@\0"
+   VALUE "InternalName", "hyprwallselector\0"
+   VALUE "LegalCopyright", "GPL-3.0-or-later\0"
+   VALUE "OriginalFilename", "hyprwallselector.exe\0"
+   VALUE "ProductName", "Hyprwallselector\0"
+   VALUE "ProductVersion", "@PROJECT_VERSION@\0"
+  END
+ END
+ BLOCK "VarFileInfo"
+ BEGIN
+  VALUE "Translation", 0x409, 1200
+ END
+END

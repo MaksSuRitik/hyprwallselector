@@ -1,0 +1,61 @@
+name: Windows installer
+on:
+  push:
+    branches: [windows-port]
+    tags: ['windows-v*']
+  pull_request:
+    paths: ['src/**', 'qml/**', 'tests/**', 'packaging/windows/**', 'CMakeLists.txt', '.github/workflows/windows-release.yml']
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        id: msys2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-ucrt-x86_64-qt6-declarative mingw-w64-ucrt-x86_64-qt6-shadertools
+            mingw-w64-ucrt-x86_64-qt6-imageformats mingw-w64-ucrt-x86_64-qt6-svg
+            mingw-w64-ucrt-x86_64-qt6-multimedia mingw-w64-ucrt-x86_64-ffmpeg
+      - name: Build, test and package
+        shell: pwsh
+        env:
+          MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = '0.3.0'
+          if ($env:REF_TYPE -eq 'tag') {
+            if ($env:RELEASE_TAG -notmatch '^windows-v([0-9]+\.[0-9]+\.[0-9]+)$') { throw 'Invalid Windows release tag' }
+            $version = $Matches[1]
+          }
+          $inno = Get-ChildItem -Path "${env:ProgramFiles(x86)}\Inno Setup*\ISCC.exe", "$env:ProgramFiles\Inno Setup*\ISCC.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $inno) { throw 'Inno Setup missing from runner' }
+          ./packaging/windows/build.ps1 -QtRoot "$env:MSYS2_LOCATION/ucrt64" -BuildRoot "$env:RUNNER_TEMP/hws-build" -OutputRoot "$env:GITHUB_WORKSPACE/release" -InnoCompiler $inno.FullName -Version $version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Windows-installer
+          path: |
+            release/*-Setup.exe
+            release/SHA256SUMS
+          if-no-files-found: error
+      - name: Publish tagged Windows release
+        if: startsWith(github.ref, 'refs/tags/windows-v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $installer = (Get-ChildItem -LiteralPath release -Filter '*-Setup.exe').FullName
+          gh release create $env:RELEASE_TAG $installer release/SHA256SUMS --verify-tag --latest=false --title "Hyprwallselector $env:RELEASE_TAG" --notes-file docs/WINDOWS-RELEASE.md
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }

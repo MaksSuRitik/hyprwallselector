@@ -55,16 +55,19 @@ class VideoRenderer final : public QQuickFramebufferObject::Renderer {
             // On Intel/AMD this needlessly loads CUDA on hybrid laptops, retaining
             // driver memory and waking the discrete GPU. Use the native VA-API
             // interop for these GL vendors; keep automatic probing elsewhere.
+#ifndef Q_OS_WIN
             const QByteArray vendor(reinterpret_cast<const char *>(gl->glGetString(GL_VENDOR)));
             if (vendor.contains("Intel") || vendor.contains("AMD") ||
                 vendor.contains("ATI Technologies"))
                 mpv_set_option_string(player.get(), "gpu-hwdec-interop", "vaapi");
+#endif
             if (qEnvironmentVariableIsSet("HWS_DEBUG"))
                 qInfo() << "Creating mpv GL context";
             mpv_opengl_init_params init{resolve, nullptr};
             std::vector<mpv_render_param> params{
                 {MPV_RENDER_PARAM_API_TYPE, const_cast<char *>(MPV_RENDER_API_TYPE_OPENGL)},
                 {MPV_RENDER_PARAM_OPENGL_INIT_PARAMS, &init}};
+#if defined(Q_OS_LINUX)
 #if QT_CONFIG(wayland)
             if (auto *native = qGuiApp->nativeInterface<QNativeInterface::QWaylandApplication>())
                 params.push_back({MPV_RENDER_PARAM_WL_DISPLAY, native->display()});
@@ -72,6 +75,8 @@ class VideoRenderer final : public QQuickFramebufferObject::Renderer {
 #if QT_CONFIG(xcb)
             if (auto *native = qGuiApp->nativeInterface<QNativeInterface::QX11Application>())
                 params.push_back({MPV_RENDER_PARAM_X11_DISPLAY, native->display()});
+#endif
+
 #endif
             params.push_back({MPV_RENDER_PARAM_INVALID, nullptr});
             if (mpv_render_context_create(&context, player.get(), params.data()) < 0) {
@@ -167,6 +172,12 @@ MediaItem::MediaItem(QQuickItem *parent) : QQuickFramebufferObject(parent) {
                           {"input-vo-keyboard", "no"},
                           {"panscan", "1.0"}})
         mpv_set_option_string(m_mpv, p.first, p.second);
+#ifdef Q_OS_WIN
+    // The shared Qt context is WGL. D3D11 copy decoding avoids probing CUDA and
+    // keeps the decoder on the adapter used by the renderer on hybrid laptops.
+    mpv_set_option_string(m_mpv, "hwdec", "d3d11va-copy");
+    mpv_set_option_string(m_mpv, "gpu-hwdec-interop", "no");
+#endif
     if (mpv_initialize(m_mpv) < 0) {
         m_player.reset();
         m_mpv = nullptr;

@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
+#include <QtGlobal>
+#ifdef Q_OS_WIN
+#include "mediawindows.h"
+#else
 #include <QQuickFramebufferObject>
 #include <memory>
 #include <mpv/client.h>
@@ -48,3 +52,4 @@ class MediaItem : public QQuickFramebufferObject {
   private:
     void drainEvents();
 };
+#endif

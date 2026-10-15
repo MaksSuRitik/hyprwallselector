@@ -48,7 +48,7 @@ Item {
                 opacity: ready ? 1 : 0.001
                 Behavior on opacity {
                     NumberAnimation {
-                        duration: 180
+                        duration: backend.windows ? 60 : 180
                     }
                 }
                 onFailed: message => backend.reportError(message)

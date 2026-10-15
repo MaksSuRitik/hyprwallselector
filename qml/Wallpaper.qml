@@ -9,6 +9,12 @@ Item {
     property Item pendingDeck: null
     property int generation: 0
     property bool paused: backend.pausedFor(outputName)
+    function posterFor(path) {
+        for (const entry of backend.items)
+            if (entry.path === path)
+                return entry.thumb || backend.cachedThumbnailUrl(path);
+        return backend.cachedThumbnailUrl(path);
+    }
     Connections {
         target: backend
         function onPausedChanged() {
@@ -16,6 +22,11 @@ Item {
         }
     }
     function failed(item, message) {
+        if (item === activeDeck && item.changing) {
+            item.changing = false;
+            backend.reportError(message);
+            return;
+        }
         if (item !== pendingDeck)
             return;
         fade.stop();
@@ -37,9 +48,20 @@ Item {
             pendingDeck.destroy();
             pendingDeck = null;
         }
+        if (backend.windows && video && activeDeck && activeDeck.video) {
+            // Retain the D3D target and scene-graph node. Release the previous
+            // decoder before opening the next, instead of overlapping two 4K pools.
+            activeDeck.changing = true;
+            activeDeck.videoReady = false;
+            activeDeck.poster = posterFor(path);
+            activeDeck.generation = generation;
+            activeDeck.path = path;
+            return;
+        }
         pendingDeck = deck.createObject(root, {
             "path": path,
             "video": video,
+            "poster": video ? posterFor(path) : "",
             "generation": generation
         });
     }
@@ -65,7 +87,10 @@ Item {
             id: page
             anchors.fill: parent
             property string path: ""
+            property string poster: ""
             property bool video: false
+            property bool videoReady: false
+            property bool changing: false
             property int generation: 0
             property bool frameReady: false
             opacity: 0.001
@@ -100,17 +125,45 @@ Item {
             }
             Component {
                 id: videoContent
-                VideoSurface {
-                    source: page.path
-                    paused: ready && root.paused
-                    onReadyChanged: {
-                        if (ready)
-                            Qt.callLater(() => {
-                                if (root && page)
-                                    root.prepared(page);
-                            });
+                Item {
+                    anchors.fill: parent
+                    VideoSurface {
+                        anchors.fill: parent
+                        source: page.path
+                        paused: ready && (root.paused || (root.pendingDeck && root.pendingDeck !== page))
+                        onReadyChanged: {
+                            if (ready) {
+                                page.videoReady = true;
+                                if (page.changing) {
+                                    page.changing = false;
+                                    backend.wallpaperPrepared(outputName, page.path);
+                                    backend.wallpaperReady(outputName, page.path);
+                                    return;
+                                }
+                                Qt.callLater(() => {
+                                    if (root && page)
+                                        root.prepared(page);
+                                });
+                            }
+                        }
+                        onFailed: message => root.failed(page, message)
                     }
-                    onFailed: message => root.failed(page, message)
+                    Image {
+                        anchors.fill: parent
+                        source: page.poster
+                        fillMode: backend.settings.fit === "contain" ? Image.PreserveAspectFit : Image.PreserveAspectCrop
+                        asynchronous: true
+                        cache: false
+                        opacity: page.videoReady ? 0 : 1
+                        Behavior on opacity { NumberAnimation { duration: backend.windows ? 60 : 180; easing.type: Easing.OutCubic } }
+                        onStatusChanged: {
+                            if (status === Image.Ready)
+                                Qt.callLater(() => {
+                                    if (root && page)
+                                        root.prepared(page);
+                                });
+                        }
+                    }
                 }
             }
         }
@@ -120,7 +173,9 @@ Item {
         property: "opacity"
         from: 0
         to: 1
-        duration: 450
+        // A cached poster makes the wallpaper respond immediately; keep a short
+        // crossfade on video changes while the decoder produces its first frame.
+        duration: target && target.video ? 150 : 450
         easing.type: Easing.InOutCubic
         onFinished: {
             if (root.activeDeck)

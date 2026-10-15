@@ -30,6 +30,7 @@ Popup {
         }
         error = "";
         currentPath = backend.filePath(url.toString());
+        diskChoice.currentIndex = Math.max(0, diskChoice.model.findIndex(drive => currentPath.toLowerCase().startsWith(drive.toLowerCase())));
         address.text = currentPath;
         directories.folder = url;
         folders.currentIndex = -1;
@@ -111,9 +112,11 @@ Popup {
                 text: picker.translate("home")
                 onClicked: picker.navigate("~")
             }
-            SoftButton {
-                text: picker.translate("disks")
-                onClicked: picker.navigate("/mnt")
+            SettingsCombo {
+                id: diskChoice
+                model: backend.drives()
+                implicitWidth: 100
+                onActivated: picker.navigate(currentText)
             }
             Item {
                 Layout.fillWidth: true

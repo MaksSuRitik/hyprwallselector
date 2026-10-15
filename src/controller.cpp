@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "controller.h"
 #include "mediaitem.h"
+#ifdef Q_OS_WIN
+#include "nativevideo.h"
+#endif
+#ifndef Q_OS_WIN
 #include <LayerShellQt/Window>
+#endif
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDesktopServices>
@@ -18,17 +23,23 @@
 #include <QSaveFile>
 #include <QStandardPaths>
 #include <QtConcurrent>
+#ifndef Q_OS_WIN
 #include <QtDBus>
 #include <systemd/sd-login.h>
 #include <unistd.h>
+#endif
 
 namespace {
 QString configHome() {
     return QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
 }
 QString stateHome() {
+#ifdef Q_OS_WIN
+    return QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + "/Hyprwallselector/state";
+#else
     QString s = qEnvironmentVariable("XDG_STATE_HOME");
     return s.isEmpty() ? QDir::homePath() + "/.local/state" : s;
+#endif
 }
 QJsonObject readJson(const QString &path) {
     QFile f(path);
@@ -96,7 +107,11 @@ QVariantList catalogue(const QString &folder) {
                 thumb + QString(".%1.part.jpg").arg(QCoreApplication::applicationPid());
             if (video) {
                 QProcess ff;
-                ff.start("ffmpeg", {"-nostdin", "-v", "error", "-y", "-threads", "2", "-ss", "0.1",
+                QString ffmpeg = QCoreApplication::applicationDirPath() + "/ffmpeg.exe";
+#ifndef Q_OS_WIN
+                ffmpeg = "ffmpeg";
+#endif
+                ff.start(ffmpeg, {"-nostdin", "-v", "error", "-y", "-threads", "2", "-ss", "0.1",
                                     "-i", f.absoluteFilePath(), "-frames:v", "1", "-vf",
                                     "scale=720:480:force_original_aspect_ratio=decrease",
                                     "-threads", "2", temporary});
@@ -133,6 +148,20 @@ QVariantList catalogue(const QString &folder) {
 } // namespace
 Controller::Controller(bool sandbox, QObject *parent) : QObject(parent), m_sandbox(sandbox) {
     load();
+#ifdef Q_OS_WIN
+    if (!m_sandbox) {
+        m_windows = new WindowsPlatform(this);
+        if (!WindowsPlatform::setHighPriority(m_config["highPriority"].toBool()))
+            setStatus(text("priorityError"));
+        connect(m_windows, &WindowsPlatform::activated, this, &Controller::activated);
+        connect(m_windows, &WindowsPlatform::environmentChanged, this, &Controller::refreshEnvironment);
+        connect(m_windows, &WindowsPlatform::desktopLost, this, [this] {
+            qDeleteAll(m_wallpapers);
+            m_wallpapers.clear();
+            m_reconnect.start();
+        });
+    }
+#endif
     m_palette.setEnabled(!m_sandbox && m_config["syncDmsColors"].toBool() &&
                          m_config["manageBackground"].toBool() &&
                          m_config["renderer"].toString() == "native");
@@ -232,6 +261,15 @@ void Controller::load() {
     }
     for (auto it = stored.begin(); it != stored.end(); ++it)
         m_config[it.key()] = it.value();
+#ifdef Q_OS_WIN
+    if (!stored.contains("highPriority")) m_config["highPriority"] = false;
+    if (!stored.contains("shortcut")) m_config["shortcut"] = "Alt+T";
+    if (!stored.contains("manageBackground")) m_config["manageBackground"] = true;
+    if (!stored.contains("folder")) m_config["folder"] = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
+    m_config["autostart"] = WindowsPlatform::autostartEnabled();
+    m_config["renderer"] = "native";
+    m_config["syncDmsColors"] = false;
+#endif
     m_state = readJson(m_statePath);
     if (m_state.isEmpty()) {
         auto old = readJson(stateHome() + "/hyprwallselector/selection.json");
@@ -246,6 +284,22 @@ QString Controller::currentPath() const {
         v = m_state.value("ALL").toObject();
     return v["path"].toString();
 }
+QString Controller::cachedThumbnailUrl(QString path) const {
+    const QFileInfo file(localPath(path));
+    if (!file.isFile() || !file.isReadable())
+        return {};
+    const QByteArray key = (file.absoluteFilePath() + QString::number(file.size()) +
+                            QString::number(file.lastModified().toMSecsSinceEpoch()))
+                               .toUtf8();
+    const QString cache = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) +
+                          "/hyprwallselector/thumbs";
+    const QString thumb = cache + "/" +
+                          QCryptographicHash::hash(key, QCryptographicHash::Sha256).toHex() +
+                          ".jpg";
+    if (!QFileInfo::exists(thumb))
+        return {};
+    return QUrl::fromLocalFile(thumb).toString();
+}
 QStringList Controller::screens() const {
     QStringList names{"ALL"};
     for (auto *s : qGuiApp->screens())
@@ -259,6 +313,9 @@ void Controller::attach(QQuickView *view) {
 void Controller::start(bool show) {
     scan();
     if (!m_sandbox) {
+#ifdef Q_OS_WIN
+
+#else
         auto bus = QDBusConnection::systemBus();
         auto *serviceWatcher = new QDBusServiceWatcher(
             "org.hyprwallselector.Hotkeys", bus, QDBusServiceWatcher::WatchForRegistration, this);
@@ -272,6 +329,7 @@ void Controller::start(bool show) {
         bus.connect("org.freedesktop.UPower", "/org/freedesktop/UPower",
                     "org.freedesktop.DBus.Properties", "PropertiesChanged", this,
                     SLOT(sessionChanged(QString, QVariantMap, QStringList)));
+#endif
         refreshSession();
         registerHotkey();
         watchHyprland();
@@ -286,6 +344,10 @@ void Controller::start(bool show) {
 void Controller::registerHotkey() {
     if (m_sandbox)
         return;
+#ifdef Q_OS_WIN
+    if (m_windows && !m_windows->registerShortcut(m_config["shortcut"].toString()))
+        setStatus(text("hotkeyError"));
+#else
     auto msg = QDBusMessage::createMethodCall("org.hyprwallselector.Hotkeys",
                                               "/org/hyprwallselector/Hotkeys",
                                               "org.hyprwallselector.Hotkeys", "Register");
@@ -298,6 +360,8 @@ void Controller::registerHotkey() {
             setStatus(text("hotkeyError"));
         call->deleteLater();
     });
+#endif
+
 }
 void Controller::activated() {
     if (m_capture || (m_captureCooldown.isValid() && m_captureCooldown.elapsed() < 500))
@@ -317,8 +381,14 @@ void Controller::toggle() {
     }
     m_visible = true;
     emit visibleChanged();
-    if (m_view)
+    if (m_view) {
+#ifdef Q_OS_WIN
+        if (m_windows) m_windows->showSelector(m_view);
+        else { m_view->show(); m_view->requestActivate(); }
+#else
         m_view->show();
+#endif
+    }
 }
 void Controller::hide() {
     if (!m_visible)
@@ -362,7 +432,11 @@ QUrl Controller::directoryUrl(QString path) const {
     if (path == "~")
         path = QDir::homePath();
     QFileInfo directory(localPath(path));
-    if (!directory.isDir() || !directory.isReadable() || !directory.isExecutable())
+    if (!directory.isDir() || !directory.isReadable()
+#ifndef Q_OS_WIN
+        || !directory.isExecutable()
+#endif
+    )
         return {};
     return QUrl::fromLocalFile(directory.absoluteFilePath());
 }
@@ -379,7 +453,18 @@ bool Controller::saveSettings(QVariantMap values) {
     next["folder"] = folder;
     if (!QStringList{"en", "uk", "ru"}.contains(next["language"].toString()))
         next["language"] = "en";
+#ifdef Q_OS_WIN
+    next["renderer"] = "native";
+    next["syncDmsColors"] = false;
+    if (!m_sandbox && m_windows && !m_windows->registerShortcut(next["shortcut"].toString())) {
+        setStatus(text("hotkeyError"));
+        return false;
+    }
+#endif
     if (!m_sandbox && !writeJson(m_configPath, next)) {
+#ifdef Q_OS_WIN
+        if (m_windows) m_windows->registerShortcut(m_config["shortcut"].toString());
+#endif
         setStatus(text("saveError"));
         return false;
     }
@@ -399,6 +484,12 @@ bool Controller::saveSettings(QVariantMap values) {
     if (keyChanged)
         registerHotkey();
     if (!m_sandbox) {
+#ifdef Q_OS_WIN
+        if (!WindowsPlatform::setAutostart(next["autostart"].toBool()))
+            setStatus(text("saveError"));
+        if (!WindowsPlatform::setHighPriority(next["highPriority"].toBool()))
+            setStatus(text("priorityError"));
+#else
         QString autopath = configHome() + "/autostart/hyprwallselector.desktop";
         if (next["autostart"].toBool()) {
             QDir().mkpath(QFileInfo(autopath).absolutePath());
@@ -412,6 +503,7 @@ bool Controller::saveSettings(QVariantMap values) {
             }
         } else
             QFile::remove(autopath);
+#endif
         if (backgroundChanged) {
             qDeleteAll(m_wallpapers);
             m_wallpapers.clear();
@@ -515,6 +607,7 @@ void Controller::createWallpaper(QScreen *screen) {
     view->setResizeMode(QQuickView::SizeRootObjectToView);
     view->rootContext()->setContextProperty("backend", this);
     view->rootContext()->setContextProperty("outputName", screen->name());
+#ifndef Q_OS_WIN
     auto *layer = LayerShellQt::Window::get(view);
     layer->setLayer(LayerShellQt::Window::LayerBackground);
     layer->setScope("hyprwallselector-background");
@@ -525,10 +618,21 @@ void Controller::createWallpaper(QScreen *screen) {
     layer->setKeyboardInteractivity(LayerShellQt::Window::KeyboardInteractivityNone);
     layer->setScreen(screen);
     layer->setActivateOnShow(false);
+#endif
     view->setSource(QUrl("qrc:/qml/Wallpaper.qml"));
     view->resize(screen->size());
     m_wallpapers << view;
+#ifdef Q_OS_WIN
+    if (!m_windows || !m_windows->attachWallpaper(view, screen)) {
+        m_wallpapers.removeOne(view);
+        delete view;
+        setStatus("Windows desktop is not ready. Wallpapers will retry automatically.");
+        m_reconnect.start();
+        return;
+    }
+#else
     view->show();
+#endif
     auto saved = m_state[screen->name()].toObject();
     if (saved.isEmpty())
         saved = m_state["ALL"].toObject();
@@ -543,6 +647,11 @@ void Controller::refreshSession() {
         m_locked = false;
         return;
     }
+#ifdef Q_OS_WIN
+    m_locked = m_windows && m_windows->locked();
+    m_battery = m_windows && m_windows->battery();
+    if (m_locked) hide();
+#else
     bool allowed = false;
     char **sessions = nullptr;
     int n = sd_uid_get_sessions(getuid(), 0, &sessions);
@@ -583,6 +692,8 @@ void Controller::refreshSession() {
     QDBusReply<QDBusVariant> battery = up.call("Get", "org.freedesktop.UPower", "OnBattery");
     if (battery.isValid())
         m_battery = battery.value().variant().toBool();
+#endif
+
 }
 void Controller::sessionChanged(QString, QVariantMap, QStringList) {
     bool wasLocked = m_locked;
@@ -594,6 +705,11 @@ void Controller::sessionChanged(QString, QVariantMap, QStringList) {
 void Controller::watchHyprland() {
     if (m_sandbox)
         return;
+#ifdef Q_OS_WIN
+    if (m_windows && m_config["manageBackground"].toBool())
+        for (auto *screen : qGuiApp->screens()) createWallpaper(screen);
+    if (m_wallpapers.size() == qGuiApp->screens().size()) m_reconnect.stop();
+#else
     QString runtime = qEnvironmentVariable("XDG_RUNTIME_DIR");
     QString sig = qEnvironmentVariable("HYPRLAND_INSTANCE_SIGNATURE");
     if (sig.isEmpty())
@@ -603,14 +719,29 @@ void Controller::watchHyprland() {
     m_events.connectToServer(runtime + "/hypr/" + sig + "/.socket2.sock");
     if (!m_reconnect.isActive())
         m_reconnect.start();
+#endif
+
 }
 bool Controller::pausedFor(QString screen) const {
-    return m_locked || (m_battery && m_config["pauseBattery"].toBool()) ||
+    return m_manualPause || m_locked || (m_battery && m_config["pauseBattery"].toBool()) ||
            m_screenPaused.value(screen, false);
 }
 void Controller::refreshEnvironment() {
     if (m_sandbox)
         return;
+#ifdef Q_OS_WIN
+    refreshSession();
+    QHash<QString, bool> next;
+    for (auto *screen : qGuiApp->screens())
+        next[screen->name()] = m_windows && (m_windows->displayOff() ||
+            (m_config["pauseFullscreen"].toBool() && m_windows->covered(screen)));
+    bool paused = m_manualPause || m_locked || (m_battery && m_config["pauseBattery"].toBool());
+    if (next != m_screenPaused || paused != m_paused) {
+        m_screenPaused = next;
+        m_paused = paused;
+        emit pausedChanged();
+    }
+#else
     if (m_environmentBusy) {
         m_environmentPending = true;
         return;
@@ -645,14 +776,32 @@ void Controller::refreshEnvironment() {
             }
         });
     });
+#endif
+
 }
 QString Controller::diagnostic() const {
     return QString::fromUtf8(
-        QJsonDocument(QJsonObject{{"version", "0.1.0"},
+        QJsonDocument(QJsonObject{{"version", QCoreApplication::applicationVersion()},
                                   {"visible", m_visible},
                                   {"paused", m_paused},
                                   {"locked", m_locked},
                                   {"items", m_items.size()},
+                                  {"currentPath", currentPath()},
+#ifdef Q_OS_WIN
+                                  {"desktopAttached", m_windows ? m_windows->attachedCount() : 0},
+                                  {"onBattery", m_battery},
+                                  {"displayOff", m_windows && m_windows->displayOff()},
+                                  {"videoFrames", qint64(MediaItem::deliveredFrames())},
+                                  {"hardwareFrames", qint64(MediaItem::hardwareFrames())},
+                                  {"nativeVideoFrames", qint64(NativeVideo::deliveredFrames())},
+                                  {"nativeVideoPlayers", NativeVideo::livePlayers()},
+                                  {"highPriority", GetPriorityClass(GetCurrentProcess()) == HIGH_PRIORITY_CLASS},
+                                  {"shortcutRegistered", m_windows && m_windows->shortcutRegistered()},
+                                  {"shortcutActivations", m_windows ? qint64(m_windows->shortcutActivations()) : 0},
+                                  {"nativeVisible", m_view && IsWindowVisible(reinterpret_cast<HWND>(m_view->winId()))},
+                                  {"memory", QJsonObject::fromVariantMap(WindowsPlatform::memoryStats())},
+#endif
+                                  {"screenPaused", QJsonObject::fromVariantMap([this] { QVariantMap map; for (auto it=m_screenPaused.begin();it!=m_screenPaused.end();++it) map[it.key()] = pausedFor(it.key()); return map; }())},
                                   {"wallpaperWindows", m_wallpapers.size()},
                                   {"videoPlayers", MediaItem::livePlayers()},
                                   {"videoRenderers", MediaItem::liveRenderers()},
@@ -661,6 +810,25 @@ QString Controller::diagnostic() const {
             .toJson());
 }
 QString Controller::text(QString key) const {
+#ifdef Q_OS_WIN
+    static const QMap<QString, QStringList> winWords = {
+        {"highPriority", {"High priority at startup", "Високий пріоритет при запуску", "Высокий приоритет при запуске"}},
+        {"priorityHint", {"Recommended if the selector responds slowly under CPU load. Applies now and at subsequent starts.", "Рекомендовано, якщо селектор повільно реагує під навантаженням CPU. Діє зараз і при наступних запусках.", "Рекомендуется, если селектор медленно реагирует при нагрузке CPU. Действует сейчас и при следующих запусках."}},
+        {"priorityError", {"Windows could not change the process priority.", "Windows не вдалося змінити пріоритет процесу.", "Windows не удалось изменить приоритет процесса."}},
+        {"integration", {"Desktop", "Робочий стіл", "Рабочий стол"}},
+        {"integrationHint", {"A living desktop, quietly in the background.", "Живі шпалери без зайвого шуму.", "Живые обои без лишнего шума."}},
+        {"backgroundHint", {"Your Windows wallpaper returns when you quit. Use one live wallpaper app at a time.", "Після виходу повернуться шпалери Windows. Використовуйте одну програму живих шпалер одночасно.", "После выхода вернутся обои Windows. Используйте одну программу живых обоев одновременно."}},
+        {"hotkeyError", {"Shortcut is unavailable or already used. Choose another combination.", "Сполучення недоступне або вже зайняте. Виберіть інше.", "Сочетание недоступно или уже занято. Выберите другое."}}
+        ,{"checkUpdates", {"Check for updates", "Перевірити оновлення", "Проверить обновления"}}
+        ,{"automaticUpdates", {"Notify about updates", "Сповіщати про оновлення", "Уведомлять об обновлениях"}}
+        ,{"updateFailed", {"Could not update. Please try again later.", "Не вдалося оновити. Спробуйте пізніше.", "Не удалось обновить. Попробуйте позже."}}
+        ,{"upToDate", {"You have the latest published Windows version.", "У вас найновіша опублікована версія для Windows.", "У вас новейшая опубликованная версия для Windows."}}
+        ,{"installUpdate", {"Version %1 is available. Download and install it now? The app will restart; your settings stay saved.", "Доступна версія %1. Завантажити й установити? Програма перезапуститься; налаштування збережуться.", "Доступна версия %1. Скачать и установить? Программа перезапустится; настройки сохранятся."}}
+        ,{"downloadingUpdate", {"Downloading verified installer…", "Завантаження інсталятора з перевіркою…", "Загрузка установщика с проверкой…"}}
+        ,{"updateAvailable", {"Version %1 is available. Click to update.", "Доступна версія %1. Натисніть для оновлення.", "Доступна версия %1. Нажмите для обновления."}}
+    };
+    if (winWords.contains(key)) return winWords[key].value(qMax(0, QStringList{"en", "uk", "ru"}.indexOf(m_config["language"].toString())));
+#endif
     static const QMap<QString, QStringList> words = {
         {"home", {"Home", "Домівка", "Домой"}},
         {"disks", {"Disks", "Диски", "Диски"}},
@@ -774,6 +942,11 @@ QString Controller::text(QString key) const {
 }
 
 bool Controller::eventFilter(QObject *, QEvent *event) {
+    if (event->type() == QEvent::Close) {
+        hide();
+        event->ignore();
+        return true;
+    }
     if (!m_capture || event->type() != QEvent::KeyPress)
         return false;
     auto *key = static_cast<QKeyEvent *>(event);
@@ -785,6 +958,14 @@ bool Controller::eventFilter(QObject *, QEvent *event) {
     if (key->key() == Qt::Key_Alt || key->key() == Qt::Key_Control || key->key() == Qt::Key_Shift ||
         key->key() == Qt::Key_Meta)
         return true;
+#ifdef Q_OS_WIN
+    UINT mods, vk;
+    int qtKey = key->key();
+    if (key->nativeVirtualKey() >= 'A' && key->nativeVirtualKey() <= 'Z') qtKey = key->nativeVirtualKey();
+    QString sequence = QKeySequence(QKeyCombination(key->modifiers(), Qt::Key(qtKey))).toString(QKeySequence::PortableText);
+    if (!WindowsPlatform::shortcutParts(sequence, mods, vk)) return true;
+    QStringList codes{sequence};
+#else
     QStringList codes;
     if (key->modifiers() & Qt::ControlModifier)
         codes << "29";
@@ -798,9 +979,38 @@ bool Controller::eventFilter(QObject *, QEvent *event) {
     if (codes.isEmpty() || scan <= 0 || scan > 767)
         return true;
     codes << QString::number(scan);
+#endif
     m_capture = false;
     m_captureCooldown.start();
     emit shortcutCaptured(codes.join('+'),
                           QKeySequence(key->keyCombination()).toString(QKeySequence::NativeText));
+    return true;
+}
+
+QStringList Controller::drives() const {
+    QStringList paths;
+#ifdef Q_OS_WIN
+    for (const auto &drive : QDir::drives()) paths << drive.absoluteFilePath();
+#else
+    paths << "/mnt" << "/media";
+#endif
+    return paths;
+}
+void Controller::setManualPause(bool paused) {
+    m_manualPause = paused;
+    refreshEnvironment();
+    emit pausedChanged();
+}
+bool Controller::applyFile(QString path) {
+    path = localPath(path);
+    QFileInfo file(path);
+    if (!file.isFile() || !file.isReadable() || (!videoFile(path) && !QImageReader::supportedImageFormats().contains(file.suffix().toLower().toUtf8()))) {
+        setStatus(text("missing")); return false;
+    }
+    if (m_sandbox || !m_config["manageBackground"].toBool()) return false;
+    QString target = m_config["monitor"].toString("ALL");
+    if (target != "ALL" && !screens().contains(target)) return false;
+    m_allRequest = target == "ALL" ? path : QString();
+    emit wallpaperRequested(target, path, videoFile(path));
     return true;
 }

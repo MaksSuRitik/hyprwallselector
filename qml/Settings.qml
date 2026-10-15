@@ -274,92 +274,104 @@ Rectangle {
             transform: Translate {
                 id: slide
             }
-            ColumnLayout {
-                spacing: 14
-                Text {
-                    text: panel.tr("generalHint")
-                    color: "#a3b6c7"
-                    font.pixelSize: 12
-                    Layout.bottomMargin: 4
-                }
-                RowLayout {
-                    Layout.fillWidth: true
+            ScrollView {
+                id: generalPage
+                clip: true
+                contentWidth: availableWidth
+                ColumnLayout {
+                    width: generalPage.availableWidth
+                    spacing: 14
                     Text {
-                        text: panel.tr("language")
-                        color: "#e2eaf2"
-                        font.pixelSize: 13
-                        Layout.fillWidth: true
-                    }
-                    SettingsCombo {
-                        id: language
-                        objectName: "languageSetting"
-                        model: ["English", "Українська", "Русский"]
-                        onActivated: panel.setDraft("language", ["en", "uk", "ru"][currentIndex])
-                    }
-                }
-                Text {
-                    text: panel.tr("folder")
-                    color: "#e2eaf2"
-                    font.pixelSize: 13
-                    Layout.topMargin: 2
-                }
-                RowLayout {
-                    TextField {
-                        id: folder
-                        objectName: "wallpaperFolder"
-                        Layout.fillWidth: true
-                        implicitHeight: 42
-                        color: "#e9eef5"
-                        selectByMouse: true
+                        text: panel.tr("generalHint")
+                        color: "#a3b6c7"
                         font.pixelSize: 12
-                        leftPadding: 12
-                        rightPadding: 12
-                        background: Rectangle {
-                            radius: 10
-                            color: "#111921"
-                            border.color: folder.activeFocus ? "#aac6d6" : "#41505e"
+                        Layout.bottomMargin: 4
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Text {
+                            text: panel.tr("language")
+                            color: "#e2eaf2"
+                            font.pixelSize: 13
+                            Layout.fillWidth: true
+                        }
+                        SettingsCombo {
+                            id: language
+                            objectName: "languageSetting"
+                            model: ["English", "Українська", "Русский"]
+                            onActivated: panel.setDraft("language", ["en", "uk", "ru"][currentIndex])
                         }
                     }
-                    SoftButton {
-                        text: panel.tr("browse")
-                        objectName: "browseFolder"
-                        onClicked: folderPicker.choose(folder.text)
-                    }
-                }
-                RowLayout {
-                    Layout.topMargin: 6
                     Text {
-                        text: panel.tr("shortcut")
+                        text: panel.tr("folder")
                         color: "#e2eaf2"
                         font.pixelSize: 13
-                        Layout.fillWidth: true
+                        Layout.topMargin: 2
                     }
-                    SoftButton {
-                        id: shortcut
-                        Layout.preferredWidth: 220
-                        text: panel.recording ? panel.tr("record") : (panel.draft.shortcutLabel || "Alt+T")
-                        onClicked: {
-                            panel.recording = true;
-                            backend.captureShortcut(true);
-                            panel.forceActiveFocus();
+                    RowLayout {
+                        TextField {
+                            id: folder
+                            objectName: "wallpaperFolder"
+                            Layout.fillWidth: true
+                            implicitHeight: 42
+                            color: "#e9eef5"
+                            selectByMouse: true
+                            font.pixelSize: 12
+                            leftPadding: 12
+                            rightPadding: 12
+                            background: Rectangle {
+                                radius: 10
+                                color: "#111921"
+                                border.color: folder.activeFocus ? "#aac6d6" : "#41505e"
+                            }
+                        }
+                        SoftButton {
+                            text: panel.tr("browse")
+                            objectName: "browseFolder"
+                            onClicked: folderPicker.choose(folder.text)
                         }
                     }
-                }
-                Rectangle {
-                    Layout.fillWidth: true
-                    height: 1
-                    color: "#34414d"
-                    Layout.topMargin: 6
-                }
-                SettingsToggle {
-                    Layout.fillWidth: true
-                    text: panel.tr("autostart")
-                    checked: panel.draft.autostart || false
-                    onToggled: panel.setDraft("autostart", checked)
-                }
-                Item {
-                    Layout.fillHeight: true
-                }
+                    RowLayout {
+                        Layout.topMargin: 6
+                        Text {
+                            text: panel.tr("shortcut")
+                            color: "#e2eaf2"
+                            font.pixelSize: 13
+                            Layout.fillWidth: true
+                        }
+                        SoftButton {
+                            id: shortcut
+                            Layout.preferredWidth: 220
+                            text: panel.recording ? panel.tr("record") : (panel.draft.shortcutLabel || "Alt+T")
+                            onClicked: {
+                                panel.recording = true;
+                                backend.captureShortcut(true);
+                                panel.forceActiveFocus();
+                            }
+                        }
+                    }
+                    Rectangle {
+                        Layout.fillWidth: true
+                        height: 1
+                        color: "#34414d"
+                        Layout.topMargin: 6
+                    }
+                    SettingsToggle {
+                        Layout.fillWidth: true
+                        text: panel.tr("autostart")
+                        checked: panel.draft.autostart || false
+                        onToggled: panel.setDraft("autostart", checked)
+                    }
+                    SettingsToggle {
+                        Layout.fillWidth: true
+                        visible: backend.windows
+                        objectName: "highPrioritySetting"
+                        text: panel.tr("highPriority")
+                        detail: panel.tr("priorityHint")
+                        checked: panel.draft.highPriority || false
+                        onToggled: panel.setDraft("highPriority", checked)
+                    }
+                    }
             }
             ColumnLayout {
                 spacing: 13
@@ -431,7 +443,7 @@ Rectangle {
                     }
                     SettingsCombo {
                         id: renderer
-                        model: ["Hyprwallselector", "end-4 (ii)"]
+                        model: backend.windows ? ["Hyprwallselector"] : ["Hyprwallselector", "end-4 (ii)"]
                         currentIndex: panel.draft.renderer === "end4" ? 1 : 0
                         onActivated: panel.setDraft("renderer", currentIndex === 1 ? "end4" : "native")
                     }
@@ -449,6 +461,7 @@ Rectangle {
                 }
                 SettingsToggle {
                     objectName: "dmsColorsSetting"
+                    visible: !backend.windows
                     Layout.fillWidth: true
                     text: panel.tr("syncDmsColors")
                     detail: panel.tr("paletteHint")
@@ -463,11 +476,11 @@ Rectangle {
                     font.pixelSize: 11
                     wrapMode: Text.WordWrap
                     lineHeight: 1.2
-                    visible: panel.draft.renderer !== "end4"
+                    visible: !backend.windows && panel.draft.renderer !== "end4"
                 }
                 SoftButton {
                     text: panel.tr("dmsMode")
-                    visible: panel.draft.renderer !== "end4"
+                    visible: !backend.windows && panel.draft.renderer !== "end4"
                     onClicked: backend.setupDms()
                 }
                 Text {
@@ -515,6 +528,12 @@ Rectangle {
             text: panel.tr("quit")
             font.pixelSize: 11
             onClicked: backend.quit()
+        }
+        SoftButton {
+            visible: backend.windows
+            text: panel.tr("checkUpdates")
+            font.pixelSize: 11
+            onClicked: backend.checkUpdates()
         }
         Item {
             Layout.fillWidth: true
