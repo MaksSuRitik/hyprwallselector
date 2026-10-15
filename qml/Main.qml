@@ -14,12 +14,35 @@ Item {
     property var entry: entries.length ? entries[Math.min(selected, entries.length - 1)] : ({})
     property real uiScale: Math.min(1.0, width / 1000, height / 740)
     property int languageRevision: 0
-    opacity: backend.visible ? 1 : 0
-    Behavior on opacity {
-        NumberAnimation {
-            duration: 140
-            easing.type: Easing.OutCubic
+    // Begin at zero even when this QML is loaded lazily after visibleChanged.
+    // A one-shot fade also prevents a late thumbnail/model update from making
+    // the whole selector disappear again while it is already open.
+    opacity: 0
+    property bool revealing: false
+    readonly property bool thumbnailsReady: {
+        for (let i = 0; i < cards.count; ++i) {
+            const slot = cards.itemAt(i);
+            if (!slot || (slot.active && (!slot.item || !slot.item.thumbnailReady)))
+                return false;
         }
+        return true;
+    }
+    readonly property bool canReveal: backend.visible && (!backend.windows || backend.selectorPresented) && thumbnailsReady
+    onCanRevealChanged: revealIfReady()
+    Component.onCompleted: revealIfReady()
+    function revealIfReady() {
+        if (!canReveal || revealing) return;
+        revealing = true;
+        appear.restart();
+    }
+    NumberAnimation {
+        id: appear
+        target: root
+        property: "opacity"
+        from: 0
+        to: 1
+        duration: 180
+        easing.type: Easing.OutCubic
     }
     function tr(key) {
         let dummy = languageRevision;
@@ -72,6 +95,9 @@ Item {
         }
         function onVisibleChanged() {
             if (!backend.visible) {
+                appear.stop();
+                root.opacity = 0;
+                root.revealing = false;
                 previewing = false;
                 settingsOpen = false;
                 settings.close();
@@ -108,6 +134,7 @@ Item {
             onClicked: root.openSettings()
         }
         Repeater {
+            id: cards
             model: root.entries
             delegate: Loader {
                 id: slot

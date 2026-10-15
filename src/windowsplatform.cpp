@@ -273,13 +273,18 @@ void WindowsPlatform::showSelector(QWindow *view) {
     if (!screen) screen = QGuiApplication::primaryScreen();
     view->setScreen(screen);
     view->setGeometry(screen->geometry());
+    const HWND handle = reinterpret_cast<HWND>(view->winId());
+    // The transparent overlay has its own content fade; a second DWM window
+    // transition can expose a stale surface while Qt recreates its scene graph.
+    const BOOL disableTransition = TRUE;
+    DwmSetWindowAttribute(handle, DWMWA_TRANSITIONS_FORCEDISABLED,
+                          &disableTransition, sizeof(disableTransition));
     view->show();
     view->raise();
     view->requestActivate();
-    const HWND handle = reinterpret_cast<HWND>(view->winId());
     // Autostart launchers can supply STARTF_USESHOWWINDOW/SW_HIDE. An explicit
     // second native show is needed for the first user-requested activation.
-    ShowWindow(handle, SW_SHOWNORMAL);
+    if (!IsWindowVisible(handle)) ShowWindow(handle, SW_SHOWNORMAL);
     SetForegroundWindow(handle);
 }
 bool WindowsPlatform::autostartEnabled() {

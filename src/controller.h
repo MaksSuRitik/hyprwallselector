@@ -22,6 +22,7 @@ class Controller final : public QObject {
     Q_PROPERTY(QString currentPath READ currentPath NOTIFY currentChanged)
     Q_PROPERTY(QString status READ status NOTIFY statusChanged)
     Q_PROPERTY(bool visible READ visible NOTIFY visibleChanged)
+    Q_PROPERTY(bool selectorPresented READ selectorPresented NOTIFY selectorPresentedChanged)
     Q_PROPERTY(bool paused READ paused NOTIFY pausedChanged)
     Q_PROPERTY(QStringList screens READ screens NOTIFY screensChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
@@ -44,6 +45,9 @@ class Controller final : public QObject {
     bool m_visible = false, m_paused = false, m_locked = true, m_battery = false, m_busy = false,
          m_sandbox = false;
     QQuickView *m_view = nullptr;
+    bool m_selectorPresented = false;
+    quint64 m_selectorGeneration = 0;
+    QMetaObject::Connection m_selectorFrame;
     QList<QQuickView *> m_wallpapers;
     QLocalSocket m_events;
     QTimer m_refresh, m_reconnect, m_scanDelay;
@@ -82,6 +86,7 @@ class Controller final : public QObject {
     bool visible() const {
         return m_visible;
     }
+    bool selectorPresented() const { return m_selectorPresented; }
     bool paused() const {
         return m_paused;
     }
@@ -136,6 +141,7 @@ class Controller final : public QObject {
     void currentChanged();
     void statusChanged();
     void visibleChanged();
+    void selectorPresentedChanged();
     void pausedChanged();
     void screensChanged();
     void busyChanged();

@@ -388,6 +388,20 @@ void Controller::toggle() {
         return;
     }
     m_visible = true;
+    const quint64 generation = ++m_selectorGeneration;
+    if (isWindows() && m_view) {
+        // Keep the native surface invisible until Qt presents its transparent
+        // first frame. Otherwise DWM can expose an old/uninitialized swap chain.
+        m_view->setOpacity(0);
+        disconnect(m_selectorFrame);
+        m_selectorFrame = connect(m_view, &QQuickWindow::frameSwapped, this, [this, generation] {
+            if (!m_visible || generation != m_selectorGeneration) return;
+            disconnect(m_selectorFrame);
+            m_selectorPresented = true;
+            emit selectorPresentedChanged();
+            m_view->setOpacity(1);
+        }, Qt::QueuedConnection);
+    }
     emit visibleChanged();
     if (m_view) {
 #ifdef Q_OS_WIN
@@ -402,7 +416,14 @@ void Controller::hide() {
     if (!m_visible)
         return;
     m_visible = false;
+    ++m_selectorGeneration;
+    disconnect(m_selectorFrame);
+    if (isWindows() && m_view) m_view->setOpacity(0);
     emit visibleChanged();
+    if (m_selectorPresented) {
+        m_selectorPresented = false;
+        emit selectorPresentedChanged();
+    }
     if (m_view)
         m_view->hide();
 }

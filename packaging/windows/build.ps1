@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory)][string]$BuildRoot,
     [Parameter(Mandatory)][string]$OutputRoot,
     [string]$InnoCompiler,
-    [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+$')][string]$Version = '0.3.1',
+    [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+$')][string]$Version = '0.3.2',
     [switch]$SkipBuild
 )
 $ErrorActionPreference = 'Stop'

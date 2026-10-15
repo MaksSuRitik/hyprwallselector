@@ -4,6 +4,8 @@ Windows 10/11 x64. Install with Setup.exe; Qt and the FFmpeg video codecs are in
 No Python, MSYS2, administrator account or external hotkey tool is required to use it.
 
 * Open from Start or press **Alt+T**. Escape hides the selector.
+  The selector waits for its first transparent frame and visible thumbnails, then
+  fades in over 180 ms. Closing resets the fade, including interrupted openings.
 * Choose the wallpaper directory in Settings. The folder picker includes drive letters.
 * Images and silent looping videos use the same carousel. Video changes show a cached poster
   immediately while the decoder starts, then fade into motion as soon as its first frame is ready.
@@ -62,8 +64,8 @@ To publish from the Windows source branch after testing:
 
 ```sh
 git push origin windows-port
-git tag windows-v0.3.1
-git push origin windows-v0.3.1
+git tag windows-v0.3.2
+git push origin windows-v0.3.2
 ```
 
 Use a new increasing version each time. `.github/workflows/windows-release.yml` builds and
@@ -94,7 +96,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake \
 
 Run `packaging/windows/build.ps1` in PowerShell with `-QtRoot C:\msys64\ucrt64`,
 `-BuildRoot C:\build\hws`, `-OutputRoot C:\build\release` and optionally
-`-InnoCompiler "C:\path\to\ISCC.exe" -Version 0.3.1`. Each bundle is assembled in a new directory.
+`-InnoCompiler "C:\path\to\ISCC.exe" -Version 0.3.2`. Each bundle is assembled in a new directory.
 The script scans PE dependencies recursively and rejects missing libraries.
 Keep the included licenses and source archive with redistributions.
 

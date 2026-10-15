@@ -14,6 +14,7 @@ Item {
     property real skew: Math.min(42, width * 0.18)
     property string videoLabel: "VIDEO"
     property string currentLabel: "Current"
+    readonly property bool thumbnailReady: thumbnail.status !== Image.Loading
     signal chosen
     Behavior on hover {
         NumberAnimation {
@@ -34,6 +35,7 @@ Item {
             color: "#252c35"
         }
         Image {
+            id: thumbnail
             anchors.fill: parent
             source: card.entry.thumb || ""
             fillMode: Image.PreserveAspectCrop
