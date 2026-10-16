@@ -3,6 +3,7 @@
 #include "mediaitem.h"
 #ifdef Q_OS_WIN
 #include "nativevideo.h"
+#include "windowsdisplays.h"
 #endif
 #ifndef Q_OS_WIN
 #include <LayerShellQt/Window>
@@ -30,6 +31,13 @@
 #endif
 
 namespace {
+QString screenId(QScreen *screen) {
+#ifdef Q_OS_WIN
+    return WindowsPlatform::screenId(screen);
+#else
+    return screen ? screen->name() : QString();
+#endif
+}
 QString configHome() {
     return QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
 }
@@ -146,7 +154,8 @@ QVariantList catalogue(const QString &folder) {
     return entries;
 }
 } // namespace
-Controller::Controller(bool sandbox, QObject *parent) : QObject(parent), m_sandbox(sandbox) {
+Controller::Controller(bool sandbox, QObject *parent, QString storageRoot)
+    : QObject(parent), m_sandbox(sandbox), m_storageRoot(std::move(storageRoot)) {
     load();
 #ifdef Q_OS_WIN
     if (!m_sandbox) {
@@ -165,6 +174,14 @@ Controller::Controller(bool sandbox, QObject *parent) : QObject(parent), m_sandb
             m_reconnect.setInterval(200);
             m_reconnect.start();
         });
+        connect(m_windows, &WindowsPlatform::wallpaperLost, this, [this](QQuickView *view) {
+            if (!m_wallpapers.removeOne(view)) return;
+            view->hide();
+            view->deleteLater();
+            m_desktopRetries = 0;
+            m_reconnect.setInterval(200);
+            m_reconnect.start();
+        }, Qt::QueuedConnection);
     }
 #endif
     m_palette.setEnabled(!m_sandbox && m_config["syncDmsColors"].toBool() &&
@@ -220,17 +237,19 @@ Controller::Controller(bool sandbox, QObject *parent) : QObject(parent), m_sandb
         }
     });
     connect(qGuiApp, &QGuiApplication::screenAdded, this, [this](QScreen *s) {
+        migrateDisplays();
         emit screensChanged();
         if (!m_sandbox && m_config["manageBackground"].toBool() &&
             m_config["renderer"].toString() != "end4")
             createWallpaper(s);
     });
     connect(qGuiApp, &QGuiApplication::screenRemoved, this, [this](QScreen *s) {
-        for (auto *w : m_wallpapers)
-            if (w->screen() == s) {
+        const auto wallpapers = m_wallpapers;
+        for (auto *w : wallpapers)
+            if (!m_wallpaperScreens.value(w) || m_wallpaperScreens.value(w) == s) {
                 m_wallpapers.removeOne(w);
+                w->hide();
                 w->deleteLater();
-                break;
             }
         emit screensChanged();
     });
@@ -240,8 +259,10 @@ Controller::~Controller() {
     qDeleteAll(m_wallpapers);
 }
 void Controller::load() {
-    m_configPath = configHome() + "/hyprwallselector/config.json";
-    m_statePath = stateHome() + "/hyprwallselector/state.json";
+    const QString configRoot = m_storageRoot.isEmpty() ? configHome() : m_storageRoot + "/config";
+    const QString stateRoot = m_storageRoot.isEmpty() ? stateHome() : m_storageRoot + "/state";
+    m_configPath = configRoot + "/hyprwallselector/config.json";
+    m_statePath = stateRoot + "/hyprwallselector/state.json";
     m_config = {{"folder", QStandardPaths::writableLocation(QStandardPaths::PicturesLocation) +
                                "/Wallpapers"},
                 {"language", "en"},
@@ -257,7 +278,7 @@ void Controller::load() {
                 {"autostart", false}};
     auto stored = readJson(m_configPath);
     if (stored.isEmpty()) {
-        auto legacy = readJson(configHome() + "/hyprwallselector.json");
+        auto legacy = readJson(configRoot + "/hyprwallselector.json");
         if (!legacy.isEmpty()) {
             m_config["folder"] = legacy["wallpaper_folder"];
             m_config["language"] = legacy["language"];
@@ -272,16 +293,25 @@ void Controller::load() {
     if (!stored.contains("shortcut")) m_config["shortcut"] = "Alt+T";
     if (!stored.contains("manageBackground")) m_config["manageBackground"] = true;
     if (!stored.contains("folder")) m_config["folder"] = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
-    m_config["autostart"] = WindowsPlatform::autostartEnabled();
+    if (!m_sandbox) m_config["autostart"] = WindowsPlatform::autostartEnabled();
     m_config["renderer"] = "native";
     m_config["syncDmsColors"] = false;
 #endif
     m_state = readJson(m_statePath);
     if (m_state.isEmpty()) {
-        auto old = readJson(stateHome() + "/hyprwallselector/selection.json");
+        auto old = readJson(stateRoot + "/hyprwallselector/selection.json");
         if (old.contains("path"))
             m_state["ALL"] = old;
     }
+    migrateDisplays();
+}
+void Controller::migrateDisplays() {
+#ifdef Q_OS_WIN
+    QList<WindowsDisplays::Display> displays;
+    for (auto *screen : qGuiApp->screens()) displays << WindowsDisplays::Display{screenId(screen), screen->name()};
+    m_config["monitor"] = WindowsDisplays::migrateTarget(m_config["monitor"].toString("ALL"), displays);
+    m_state = WindowsDisplays::migrateState(m_state, displays);
+#endif
 }
 QString Controller::currentPath() const {
     QString monitor = m_config["monitor"].toString("ALL");
@@ -308,9 +338,22 @@ QString Controller::cachedThumbnailUrl(QString path) const {
 }
 QStringList Controller::screens() const {
     QStringList names{"ALL"};
-    for (auto *s : qGuiApp->screens())
-        names << s->name();
+    for (auto *s : qGuiApp->screens()) {
+        const auto id = screenId(s);
+        if (!id.isEmpty() && !names.contains(id)) names << id;
+    }
     return names;
+}
+QString Controller::screenLabel(QString id) const {
+    if (id == "ALL") return text("all");
+#ifdef Q_OS_WIN
+    for (auto *screen : qGuiApp->screens())
+        if (screenId(screen) == id) {
+            const auto device = id.section('\\', -1);
+            return screen->name() == id ? device : screen->name() + " (" + device + ")";
+        }
+#endif
+    return id;
 }
 void Controller::attach(QQuickView *view) {
     m_view = view;
@@ -518,7 +561,7 @@ bool Controller::saveSettings(QVariantMap values) {
         m_lockScreen.setEnabled(next["syncLockScreen"].toBool());
         if (next["syncLockScreen"].toBool()) {
             auto *primary = qGuiApp->primaryScreen();
-            auto saved = m_state.value(primary->name()).toObject();
+            auto saved = m_state.value(screenId(primary)).toObject();
             if (saved.isEmpty()) saved = m_state.value("ALL").toObject();
             m_lockScreen.request(saved["path"].toString(), saved["video"].toBool());
         }
@@ -608,7 +651,7 @@ void Controller::apply(int index) {
     m_allRequest = target == "ALL" ? path : QString();
 #ifdef Q_OS_WIN
     for (auto *screen : qGuiApp->screens())
-        if (target == "ALL" || target == screen->name()) m_requestedPaths[screen->name()] = path;
+        if (target == "ALL" || target == screenId(screen)) m_requestedPaths[screenId(screen)] = path;
     watchHyprland();
     if (m_wallpapers.isEmpty()) {
         setStatus(m_windows->desktopError() + " The selection will be retried automatically.");
@@ -635,30 +678,35 @@ void Controller::wallpaperReady(QString screen, QString path) {
 #ifdef Q_OS_WIN
     if (!m_sandbox) {
         if (m_firstWallpaperMs < 0) m_firstWallpaperMs = m_startupTimer.elapsed();
-        if (screen == qGuiApp->primaryScreen()->name()) m_lockScreen.request(path, videoFile(path));
+        if (screen == screenId(qGuiApp->primaryScreen())) m_lockScreen.request(path, videoFile(path));
     }
 #endif
 }
 void Controller::syncPalette() {
     for (auto *screen : qGuiApp->screens()) {
-        auto state = m_state.value(screen->name()).toObject();
+        auto state = m_state.value(screenId(screen)).toObject();
         if (state.isEmpty())
             state = m_state.value("ALL").toObject();
         const QString path = state["path"].toString();
-        m_palette.request(screen->name(), path, videoFile(path));
+        m_palette.request(screenId(screen), path, videoFile(path));
     }
 }
 void Controller::createWallpaper(QScreen *screen) {
     for (auto *view : m_wallpapers)
-        if (view->screen() == screen)
+        if (m_wallpaperScreens.value(view) == screen)
             return;
+    const QString output = screenId(screen);
+    if (output.isEmpty()) {
+        if (!m_reconnect.isActive()) m_reconnect.start();
+        return;
+    }
     auto *view = new QQuickView;
     view->setFlags(Qt::FramelessWindowHint | Qt::WindowTransparentForInput);
     view->setScreen(screen);
     view->setColor(Qt::transparent);
     view->setResizeMode(QQuickView::SizeRootObjectToView);
     view->rootContext()->setContextProperty("backend", this);
-    view->rootContext()->setContextProperty("outputName", screen->name());
+    view->rootContext()->setContextProperty("outputName", output);
 #ifndef Q_OS_WIN
     auto *layer = LayerShellQt::Window::get(view);
     layer->setLayer(LayerShellQt::Window::LayerBackground);
@@ -674,6 +722,8 @@ void Controller::createWallpaper(QScreen *screen) {
     view->setSource(QUrl("qrc:/qml/Wallpaper.qml"));
     view->resize(screen->size());
     m_wallpapers << view;
+    m_wallpaperScreens[view] = screen;
+    connect(view, &QObject::destroyed, this, [this, view] { m_wallpaperScreens.remove(view); });
 #ifdef Q_OS_WIN
     if (!m_windows || !m_windows->attachWallpaper(view, screen)) {
         m_wallpapers.removeOne(view);
@@ -685,15 +735,16 @@ void Controller::createWallpaper(QScreen *screen) {
 #else
     view->show();
 #endif
-    auto saved = m_state[screen->name()].toObject();
+    auto saved = m_state[output].toObject();
     if (saved.isEmpty())
         saved = m_state["ALL"].toObject();
     QString path = saved["path"].toString();
 #ifdef Q_OS_WIN
-    if (m_requestedPaths.contains(screen->name())) path = m_requestedPaths.value(screen->name());
+    if (m_requestedPaths.contains(output)) path = m_requestedPaths.value(output);
+    else if (!m_allRequest.isEmpty()) path = m_allRequest;
 #endif
     if (QFileInfo(path).isReadable())
-        QTimer::singleShot(0, view, [this, name = screen->name(), path] {
+        QTimer::singleShot(0, view, [this, name = output, path] {
             emit wallpaperRequested(name, path, videoFile(path));
         });
 }
@@ -761,11 +812,13 @@ void Controller::watchHyprland() {
     if (m_sandbox)
         return;
 #ifdef Q_OS_WIN
+    if (!m_config["manageBackground"].toBool()) { m_reconnect.stop(); return; }
     if (m_windows && m_config["manageBackground"].toBool())
         for (auto *screen : qGuiApp->screens()) createWallpaper(screen);
     if (m_wallpapers.size() == qGuiApp->screens().size()) {
         if (m_desktopRetries > 0) setStatus("");
         m_reconnect.stop(); m_desktopRetries = 0;
+        m_reconnect.setInterval(200);
     } else if (++m_desktopRetries > 25) m_reconnect.setInterval(3000);
 #else
     QString runtime = qEnvironmentVariable("XDG_RUNTIME_DIR");
@@ -791,7 +844,7 @@ void Controller::refreshEnvironment() {
     refreshSession();
     QHash<QString, bool> next;
     for (auto *screen : qGuiApp->screens())
-        next[screen->name()] = m_windows && (m_windows->displayOff() ||
+        next[screenId(screen)] = m_windows && (m_windows->displayOff() ||
             (m_config["pauseFullscreen"].toBool() && m_windows->covered(screen)));
     bool paused = m_manualPause || m_locked || (m_battery && m_config["pauseBattery"].toBool());
     if (next != m_screenPaused || paused != m_paused) {
@@ -1077,7 +1130,7 @@ bool Controller::applyFile(QString path) {
     m_allRequest = target == "ALL" ? path : QString();
 #ifdef Q_OS_WIN
     for (auto *screen : qGuiApp->screens())
-        if (target == "ALL" || target == screen->name()) m_requestedPaths[screen->name()] = path;
+        if (target == "ALL" || target == screenId(screen)) m_requestedPaths[screenId(screen)] = path;
     watchHyprland();
 #endif
     emit wallpaperRequested(target, path, videoFile(path));

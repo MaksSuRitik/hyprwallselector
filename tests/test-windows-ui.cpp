@@ -8,10 +8,62 @@
 #include <QQmlContext>
 #include <QtTest>
 #include <QTemporaryDir>
+#include <QJsonDocument>
+#include <QScreen>
 
 class WindowsUiTest : public QObject {
     Q_OBJECT
   private slots:
+    void freshDesktopAndRecovery() {
+        if (!qEnvironmentVariableIsSet("HWS_TEST_DESKTOP")) QSKIP("Opt-in isolated desktop profile test");
+        QTemporaryDir profile;
+        QVERIFY(profile.isValid());
+        QImage image(64,64,QImage::Format_RGB32); image.fill(QColor("#243d4c"));
+        const auto path = profile.filePath("image.jpg");
+        QVERIFY(image.save(path));
+        QDir().mkpath(profile.filePath("config/hyprwallselector"));
+        QFile config(profile.filePath("config/hyprwallselector/config.json"));
+        QVERIFY(config.open(QIODevice::WriteOnly));
+        config.write(QJsonDocument(QJsonObject{{"folder", profile.path()},
+            {"syncLockScreen", false}, {"shortcut", "Ctrl+Alt+Shift+F9"}}).toJson());
+        config.close();
+        // No saved wallpaper/profile; leave user autostart and lock screen alone.
+        Controller backend(false, nullptr, profile.path());
+        backend.start(false);
+        QVERIFY(backend.applyFile(path));
+        auto report = [&] { return QJsonDocument::fromJson(backend.diagnostic().toUtf8()).object(); };
+        const int count = qGuiApp->screens().size();
+        QTRY_COMPARE_WITH_TIMEOUT(backend.currentPath(), path, 5000);
+        QCOMPARE(report()["wallpaperWindows"].toInt(), count);
+        QCOMPARE(report()["desktopAttached"].toInt(), count);
+        QVERIFY(report()["firstWallpaperMs"].toInteger() >= 0);
+        auto *platform = backend.findChild<WindowsPlatform *>();
+        QVERIFY(platform);
+        QSignalSpy requested(&backend, &Controller::wallpaperRequested);
+        // Simulate Explorer invalidating its desktop without restarting Explorer.
+        for (int cycle=0; cycle<3; ++cycle) {
+            requested.clear();
+            platform->desktopLost();
+            QCOMPARE(report()["wallpaperWindows"].toInt(), 0);
+            QTRY_COMPARE_WITH_TIMEOUT(report()["desktopAttached"].toInt(), count, 5000);
+            QTRY_VERIFY(!requested.isEmpty());
+            QCOMPARE(report()["wallpaperWindows"].toInt(), count);
+            QCOMPARE(backend.currentPath(), path);
+        }
+        // A transient placement failure must recreate the affected view too.
+        // Views have foreign QWindow parents; obtain one through Qt's window list.
+        QQuickView *wallpaper = nullptr;
+        for (auto *window : qGuiApp->allWindows())
+            if (auto *view = qobject_cast<QQuickView *>(window); view && view->parent()) {
+                wallpaper = view; break;
+            }
+        QVERIFY(wallpaper);
+        QPointer<QQuickView> old = wallpaper;
+        platform->wallpaperLost(wallpaper);
+        QTRY_VERIFY(old.isNull());
+        QTRY_COMPARE_WITH_TIMEOUT(report()["desktopAttached"].toInt(), count, 5000);
+        QCOMPARE(report()["wallpaperWindows"].toInt(), count);
+    }
     void selectorOpeningFrames() {
         if (!qEnvironmentVariableIsSet("HWS_TEST_UI")) QSKIP("Opt-in rendered UI test");
         QTemporaryDir library;

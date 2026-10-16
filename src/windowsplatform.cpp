@@ -37,6 +37,10 @@ MONITORINFOEXW WindowsPlatform::monitorInfo(QScreen *screen, DWORD *error) {
     if (error) *error = ERROR_SUCCESS;
     return info;
 }
+QString WindowsPlatform::screenId(QScreen *screen) {
+    const auto info = monitorInfo(screen);
+    return info.cbSize ? QString::fromWCharArray(info.szDevice) : QString();
+}
 
 WindowsPlatform::WindowsPlatform(QObject *parent) : QObject(parent) {
     m_messages.setFlags(Qt::Tool | Qt::FramelessWindowHint);
@@ -54,7 +58,7 @@ WindowsPlatform::WindowsPlatform(QObject *parent) : QObject(parent) {
             m_locked = info->Data.WTSInfoExLevel1.SessionFlags == WTS_SESSIONSTATE_LOCK;
         WTSFreeMemory(data);
     }
-    // Four cheap Win32 queries per second; no subprocesses or window-tree scans.
+    // Cheap Win32 queries twice per second; no subprocesses or window-tree scans.
     m_poll.setInterval(500);
     m_poll.setTimerType(Qt::CoarseTimer);
     connect(&m_poll, &QTimer::timeout, this, &WindowsPlatform::poll);
@@ -231,8 +235,11 @@ bool WindowsPlatform::attachWallpaper(QQuickView *view, QScreen *screen) {
     view->show();
     if (!positionWallpaper(view, screen)) { view->hide(); return false; }
     m_views << view;
-    connect(screen, &QScreen::geometryChanged, view, [this, view, screen] { positionWallpaper(view, screen); });
-    connect(screen, &QScreen::logicalDotsPerInchChanged, view, [this, view, screen] { positionWallpaper(view, screen); });
+    auto reposition = [this, view, screen = QPointer<QScreen>(screen)] {
+        if (!screen || !positionWallpaper(view, screen)) emit wallpaperLost(view);
+    };
+    connect(screen, &QScreen::geometryChanged, view, reposition);
+    connect(screen, &QScreen::logicalDotsPerInchChanged, view, reposition);
     return true;
 }
 void WindowsPlatform::maintainDesktopOrder() {
@@ -281,6 +288,7 @@ void WindowsPlatform::poll() {
 void WindowsPlatform::showSelector(QWindow *view) {
     auto *screen = QGuiApplication::screenAt(QCursor::pos());
     if (!screen) screen = QGuiApplication::primaryScreen();
+    if (!screen) return;
     view->setScreen(screen);
     view->setGeometry(screen->geometry());
     const HWND handle = reinterpret_cast<HWND>(view->winId());

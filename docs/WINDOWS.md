@@ -45,6 +45,10 @@ The JSON includes Windows version, Explorer layout, window geometry, decoder cou
 startup timing and errors. Display diagnostics include Qt labels, native Windows device
 names, monitor handles, DPI scaling and physical bounds. Wallpaper placement uses the
 native monitor handle, not a comparison of display names or scaled coordinates.
+Each output has a separate Windows device key; labels remain readable in Settings,
+including when two screens have the same model name. Old selections migrate on load.
+Wallpaper windows retain their intended output when Qt reparents or moves windows;
+temporary positioning failures are retried without requiring a manual restart.
 The report also contains your local wallpaper paths; it is saved
 locally and is never uploaded automatically.
 
@@ -67,8 +71,8 @@ To publish from the Windows source branch after testing:
 
 ```sh
 git push origin windows-port
-git tag windows-v0.3.3
-git push origin windows-v0.3.3
+git tag windows-v0.3.4
+git push origin windows-v0.3.4
 ```
 
 Use a new increasing version each time. `.github/workflows/windows-release.yml` builds and
@@ -99,7 +103,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake \
 
 Run `packaging/windows/build.ps1` in PowerShell with `-QtRoot C:\msys64\ucrt64`,
 `-BuildRoot C:\build\hws`, `-OutputRoot C:\build\release` and optionally
-`-InnoCompiler "C:\path\to\ISCC.exe" -Version 0.3.3`. Each bundle is assembled in a new directory.
+`-InnoCompiler "C:\path\to\ISCC.exe" -Version 0.3.4`. Each bundle is assembled in a new directory.
 The script scans PE dependencies recursively and rejects missing libraries.
 Keep the included licenses and source archive with redistributions.
 
@@ -110,5 +114,10 @@ videos and run `test-nativevideo.exe`. It checks moving frames, pause/resume, so
 changes, concurrent preview, teardown and missing files. `HWS_TEST_DWELL` (milliseconds)
 and `HWS_TEST_CYCLES` extend the run; `HWS_TEST_REPORT` sets its JSON measurement path.
 `HWS_TEST_DESKTOP=1` enables an Explorer attachment test in `test-windows.exe`.
+It also enables an isolated first-use and desktop recovery test in `test-windows-ui.exe`.
+That test uses temporary settings and images, disables lock-screen sync, and restores
+visibility of the user's wallpaper when its temporary windows are destroyed.
+`test-windows-state.exe` runs clean-profile, legacy-setting and duplicate-model tests
+in normal CI; it never changes the actual user's settings or startup registration.
 `HWS_TEST_LOCKSCREEN_IMAGE` enables a real personalization API test using the supplied
 image (it changes the lock screen). Both are opt-in and are skipped in normal CI.

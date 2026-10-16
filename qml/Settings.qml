@@ -390,7 +390,7 @@ Rectangle {
                     }
                     SettingsCombo {
                         id: display
-                        model: backend.screens.map(s => s === "ALL" ? panel.tr("all") : s)
+                        model: backend.screens.map(s => backend.screenLabel(s))
                         onActivated: panel.setDraft("monitor", backend.screens[currentIndex])
                     }
                 }

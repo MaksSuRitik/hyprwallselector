@@ -49,6 +49,8 @@ class Controller final : public QObject {
     quint64 m_selectorGeneration = 0;
     QMetaObject::Connection m_selectorFrame;
     QList<QQuickView *> m_wallpapers;
+    QHash<QQuickView *, QPointer<QScreen>> m_wallpaperScreens;
+    QString m_storageRoot;
     QLocalSocket m_events;
     QTimer m_refresh, m_reconnect, m_scanDelay;
     QFileSystemWatcher m_files;
@@ -69,9 +71,11 @@ class Controller final : public QObject {
     void setStatus(const QString &value);
     void saveState();
     void syncPalette();
+    void migrateDisplays();
 
   public:
-    explicit Controller(bool sandbox = false, QObject *parent = nullptr);
+    // Optional storage root isolates settings/state for automated tests.
+    explicit Controller(bool sandbox = false, QObject *parent = nullptr, QString storageRoot = {});
     ~Controller() override;
     QVariantList items() const {
         return m_items;
@@ -94,6 +98,7 @@ class Controller final : public QObject {
         return m_busy;
     }
     QStringList screens() const;
+    Q_INVOKABLE QString screenLabel(QString id) const;
     void attach(QQuickView *view);
     void start(bool show);
     Q_PROPERTY(bool windows READ isWindows CONSTANT)

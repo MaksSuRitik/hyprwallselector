@@ -41,6 +41,7 @@ class WindowsPlatform final : public QObject, public QAbstractNativeEventFilter 
     static QVariantMap memoryStats();
     static QSize displayPixelSize();
     static MONITORINFOEXW monitorInfo(QScreen *screen, DWORD *error = nullptr);
+    static QString screenId(QScreen *screen);
     static bool covers(const QRect &window, const QRect &monitor);
     static bool shortcutParts(const QString &sequence, UINT &modifiers, UINT &key);
     QVariantMap diagnostic() const;
@@ -50,6 +51,7 @@ class WindowsPlatform final : public QObject, public QAbstractNativeEventFilter 
     void activated();
     void environmentChanged();
     void desktopLost();
+    void wallpaperLost(QQuickView *view);
   private:
     QWindow m_messages;
     QTimer m_poll;
