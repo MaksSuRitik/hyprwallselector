@@ -34,7 +34,7 @@ jobs:
           REF_TYPE: ${{ github.ref_type }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $version = '0.3.4'
+          $version = '0.3.5'
           if ($env:REF_TYPE -eq 'tag') {
             if ($env:RELEASE_TAG -notmatch '^windows-v([0-9]+\.[0-9]+\.[0-9]+)$') { throw 'Invalid Windows release tag' }
             $version = $Matches[1]

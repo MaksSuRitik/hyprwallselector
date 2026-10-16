@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory)][string]$BuildRoot,
     [Parameter(Mandatory)][string]$OutputRoot,
     [string]$InnoCompiler,
-    [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+$')][string]$Version = '0.3.4',
+    [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+$')][string]$Version = '0.3.5',
     [switch]$SkipBuild
 )
 $ErrorActionPreference = 'Stop'
@@ -68,6 +68,16 @@ Hyprwallselector source and build scripts are included in source.zip.
 $sourcePaths = 'CMakeLists.txt','LICENSE','README.md','src','qml','shaders','packaging','tests','docs','.github' | ForEach-Object { Join-Path $sourceRoot $_ }
 Compress-Archive -LiteralPath $sourcePaths -DestinationPath "$bundle\source.zip" -CompressionLevel Optimal
 if ($InnoCompiler) {
+    # Exercise the exact Pascal cleanup helper with an isolated fake profile.
+    # This harness has no payload, registry entries, startup tasks or uninstaller.
+    $cleanupTest = Join-Path $BuildRoot ('uninstall-test-' + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $cleanupTest | Out-Null
+    Run-Checked $InnoCompiler @("/DTestRoot=$cleanupTest", "$sourceRoot\tests\test-uninstall-data.iss")
+    $cleanupProcess = Start-Process -FilePath "$cleanupTest\cleanup-test.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/LOG=`"$cleanupTest\run.log`"" -WindowStyle Hidden -PassThru
+    if (-not $cleanupProcess.WaitForExit(30000)) { throw "Uninstall cleanup test timed out: $cleanupTest" }
+    if ($cleanupProcess.ExitCode -ne 0 -or -not (Test-Path -LiteralPath "$cleanupTest\passed.txt")) {
+        throw "Uninstall cleanup test failed; inspect $cleanupTest\run.log"
+    }
     Run-Checked $InnoCompiler @("/DBundleDir=$bundle", "/DOutputDir=$OutputRoot", "/DAppVersion=$Version", "$PSScriptRoot\installer.iss")
     $installer = Join-Path $OutputRoot "Hyprwallselector-$Version-Setup.exe"
     ((Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLower() + '  ' + [IO.Path]::GetFileName($installer)) | Set-Content -LiteralPath "$OutputRoot\SHA256SUMS" -Encoding ascii

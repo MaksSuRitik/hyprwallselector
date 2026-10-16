@@ -32,8 +32,11 @@ No Python, MSYS2, administrator account or external hotkey tool is required to u
   Neither a universal 50 MB ceiling nor a 500 ms launch on every disk/codec is guaranteed.
 * Quitting restores visibility of the existing Windows wallpaper. The original wallpaper file
   and Windows wallpaper setting are never replaced.
-* Uninstall from Windows Installed apps. This removes the program, shortcuts and autostart;
-  your wallpaper files and preferences remain.
+* Uninstall from Windows Installed apps. This removes the program, shortcuts, autostart,
+  generated thumbnails, decoder/shader caches and downloaded update installers.
+  The uninstaller asks whether to also remove preferences and saved selections.
+  Original wallpaper folders are kept. Silent uninstall keeps preferences unless
+  explicitly run with `/PURGEUSERDATA=1`.
 
 The wallpaper uses Explorer's desktop host, supporting both the classic WorkerW layout
 and the newer Windows 11 raised desktop layout. This interface is not a public Windows API;
@@ -71,8 +74,8 @@ To publish from the Windows source branch after testing:
 
 ```sh
 git push origin windows-port
-git tag windows-v0.3.4
-git push origin windows-v0.3.4
+git tag windows-v0.3.5
+git push origin windows-v0.3.5
 ```
 
 Use a new increasing version each time. `.github/workflows/windows-release.yml` builds and
@@ -103,9 +106,11 @@ pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake \
 
 Run `packaging/windows/build.ps1` in PowerShell with `-QtRoot C:\msys64\ucrt64`,
 `-BuildRoot C:\build\hws`, `-OutputRoot C:\build\release` and optionally
-`-InnoCompiler "C:\path\to\ISCC.exe" -Version 0.3.4`. Each bundle is assembled in a new directory.
+`-InnoCompiler "C:\path\to\ISCC.exe" -Version 0.3.5`. Each bundle is assembled in a new directory.
 The script scans PE dependencies recursively and rejects missing libraries.
 Keep the included licenses and source archive with redistributions.
+Installer builds also run the shared uninstall-cleanup code against a temporary
+profile, checking both preference choices, personal-file preservation and path bounds.
 
 The Linux build continues to use LayerShellQt, systemd/logind and its existing hotkey service.
 

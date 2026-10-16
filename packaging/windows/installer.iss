@@ -2,7 +2,7 @@
  #error BundleDir must point to the deployed application directory
 #endif
 #ifndef AppVersion
- #define AppVersion "0.3.4"
+ #define AppVersion "0.3.5"
 #endif
 #ifndef OutputDir
  #define OutputDir "."
@@ -36,6 +36,14 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "ukrainian"; MessagesFile: "compiler:Languages\Ukrainian.isl"
 Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 
+[CustomMessages]
+english.RemoveUserSettings=Also delete Hyprwallselector settings and saved wallpaper selections?%n%nGenerated caches are always removed. Your original pictures and videos are kept.%n%nChoose No to keep settings for reinstallation.
+ukrainian.RemoveUserSettings=Також видалити налаштування Hyprwallselector і збережений вибір шпалер?%n%nСтворений програмою кеш видаляється завжди. Ваші оригінальні картинки й відео залишаться.%n%nОберіть «Ні», щоб зберегти налаштування для перевстановлення.
+russian.RemoveUserSettings=Также удалить настройки Hyprwallselector и сохранённый выбор обоев?%n%nСозданный программой кэш удаляется всегда. Ваши исходные картинки и видео сохранятся.%n%nВыберите «Нет», чтобы сохранить настройки для переустановки.
+english.CleanupIncomplete=Some Hyprwallselector data could not be removed because it is locked or access was denied. See the uninstall log for details.
+ukrainian.CleanupIncomplete=Деякі дані Hyprwallselector не вдалося видалити: файли зайняті або доступ заборонено. Подробиці — у журналі видалення.
+russian.CleanupIncomplete=Часть данных Hyprwallselector не удалось удалить: файлы заняты или доступ запрещён. Подробности — в журнале удаления.
+
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 Name: "autostart"; Description: "Start Hyprwallselector when I sign in"
@@ -58,6 +66,11 @@ Filename: "{app}\hyprwallselector.exe"; Parameters: "--quit"; Flags: runhidden w
 Type: files; Name: "{app}\hyprwallselector.log"
 
 [Code]
+var
+  RemoveUserSettings: Boolean;
+
+#include "cleanup-data.iss"
+
 function IsUpdate: Boolean;
 begin
   Result := ExpandConstant('{param:UPDATE|0}') <> '0';
@@ -94,10 +107,25 @@ end;
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   Code: Integer;
+  CleanupOK: Boolean;
 begin
   if CurUninstallStep = usUninstall then begin
+    RemoveUserSettings := ExpandConstant('{param:PURGEUSERDATA|0}') = '1';
+    if (not RemoveUserSettings) and (not UninstallSilent) then
+      RemoveUserSettings := SuppressibleMsgBox(CustomMessage('RemoveUserSettings'),
+        mbConfirmation, MB_YESNO or MB_DEFBUTTON2, IDNO) = IDYES;
     StopApp;
     Exec(ExpandConstant('{app}\hyprwallselector.exe'), '--autostart off', '', SW_HIDE, ewWaitUntilTerminated, Code);
     RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Hyprwallselector');
+  end else if CurUninstallStep = usPostUninstall then begin
+    CleanupOK := CleanupUserData(ExpandConstant('{localappdata}'), RemoveUserSettings);
+    if RemoveUserSettings then begin
+      if RegKeyExists(HKCU, 'Software\Hyprwallselector\hyprwallselector') then
+        if not RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Hyprwallselector\hyprwallselector') then
+          CleanupOK := False;
+      RegDeleteKeyIfEmpty(HKCU, 'Software\Hyprwallselector');
+    end;
+    if not CleanupOK then
+      SuppressibleMsgBox(CustomMessage('CleanupIncomplete'), mbInformation, MB_OK, IDOK);
   end;
 end;
