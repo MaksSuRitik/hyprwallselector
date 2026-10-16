@@ -3,12 +3,43 @@
 #include "windowslockscreen.h"
 #include <QGuiApplication>
 #include <QQuickView>
+#include <QScreen>
+#include <QtGui/qscreen_platform.h>
 #include <QtTest>
 #include <thread>
 
 class WindowsTest : public QObject {
     Q_OBJECT
   private slots:
+    void nativeMonitors() {
+        DWORD error = ERROR_SUCCESS;
+        QCOMPARE(WindowsPlatform::monitorInfo(nullptr, &error).cbSize, DWORD(0));
+        QCOMPARE(error, DWORD(ERROR_INVALID_MONITOR_HANDLE));
+        if (QGuiApplication::platformName() != "windows") QSKIP("Requires the Windows QPA plugin");
+        QList<HMONITOR> monitors;
+        QVERIFY(EnumDisplayMonitors(nullptr, nullptr, [](HMONITOR monitor, HDC, LPRECT, LPARAM data)->BOOL {
+            reinterpret_cast<QList<HMONITOR> *>(data)->append(monitor);
+            return TRUE;
+        }, reinterpret_cast<LPARAM>(&monitors)));
+        QVERIFY(!qGuiApp->screens().isEmpty());
+        for (auto *screen : qGuiApp->screens()) {
+            auto *native = screen->nativeInterface<QNativeInterface::QWindowsScreen>();
+            QVERIFY(native);
+            QVERIFY(monitors.contains(native->handle()));
+            const auto info = WindowsPlatform::monitorInfo(screen, &error);
+            QCOMPARE(error, DWORD(ERROR_SUCCESS));
+            QCOMPARE(info.cbSize, DWORD(sizeof(info)));
+            MONITORINFOEXW expected{}; expected.cbSize = sizeof(expected);
+            QVERIFY(GetMonitorInfoW(native->handle(), &expected));
+            QCOMPARE(QString::fromWCharArray(info.szDevice), QString::fromWCharArray(expected.szDevice));
+            QCOMPARE(info.rcMonitor.left, expected.rcMonitor.left);
+            QCOMPARE(info.rcMonitor.top, expected.rcMonitor.top);
+            QCOMPARE(info.rcMonitor.right, expected.rcMonitor.right);
+            QCOMPARE(info.rcMonitor.bottom, expected.rcMonitor.bottom);
+            QVERIFY(info.rcMonitor.right > info.rcMonitor.left);
+            QVERIFY(info.rcMonitor.bottom > info.rcMonitor.top);
+        }
+    }
     void desktopAttachment() {
         if (!qEnvironmentVariableIsSet("HWS_TEST_DESKTOP")) QSKIP("Opt-in Explorer integration test");
         WindowsPlatform platform;

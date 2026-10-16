@@ -8,6 +8,7 @@
 #include <QKeySequence>
 #include <QQuickView>
 #include <QScreen>
+#include <QtGui/qscreen_platform.h>
 #include <QSettings>
 #include <QSysInfo>
 #include <dwmapi.h>
@@ -18,18 +19,23 @@
 namespace {
 constexpr GUID displayState{0x6fe69556, 0x704a, 0x47a0, {0x8f,0x24,0xc2,0x8d,0x93,0x6f,0xda,0x47}};
 QRect rect(const RECT &r) { return {r.left, r.top, r.right-r.left, r.bottom-r.top}; }
-MONITORINFOEXW monitorInfo(QScreen *screen) {
-    struct Search { QString name; MONITORINFOEXW info{}; } search{screen->name(), {}};
-    EnumDisplayMonitors(nullptr, nullptr, [](HMONITOR mon, HDC, LPRECT, LPARAM data)->BOOL {
-        auto &s = *reinterpret_cast<Search *>(data);
-        MONITORINFOEXW info{}; info.cbSize = sizeof(info);
-        if (GetMonitorInfoW(mon, &info) && QString::fromWCharArray(info.szDevice) == s.name) {
-            s.info = info; return FALSE;
-        }
-        return TRUE;
-    }, reinterpret_cast<LPARAM>(&search));
-    return search.info;
 }
+
+MONITORINFOEXW WindowsPlatform::monitorInfo(QScreen *screen, DWORD *error) {
+    if (error) *error = ERROR_INVALID_MONITOR_HANDLE;
+    if (!screen) return {};
+    // QScreen::name() is a presentation label, not a Win32 device identifier.
+    // The native handle also avoids guessing with DPI-scaled Qt coordinates.
+    auto *native = screen->nativeInterface<QNativeInterface::QWindowsScreen>();
+    if (!native || !native->handle()) return {};
+    MONITORINFOEXW info{};
+    info.cbSize = sizeof(info);
+    if (!GetMonitorInfoW(native->handle(), &info)) {
+        if (error) *error = GetLastError();
+        return {};
+    }
+    if (error) *error = ERROR_SUCCESS;
+    return info;
 }
 
 WindowsPlatform::WindowsPlatform(QObject *parent) : QObject(parent) {
@@ -237,9 +243,12 @@ void WindowsPlatform::maintainDesktopOrder() {
 }
 bool WindowsPlatform::positionWallpaper(QQuickView *view, QScreen *screen) {
     if (!desktopReady()) { view->hide(); return false; }
-    auto monitor = monitorInfo(screen);
+    DWORD monitorError = ERROR_SUCCESS;
+    const auto monitor = monitorInfo(screen, &monitorError);
     if (!monitor.cbSize) {
-        m_desktopError = "Cannot locate Windows monitor: " + screen->name();
+        m_desktopError = QString("Cannot query Windows monitor %1 (%2). Waiting for the display to reconnect.")
+                             .arg(screen ? screen->name() : QStringLiteral("<disconnected>"))
+                             .arg(monitorError);
         view->hide(); return false;
     }
     const HWND handle = reinterpret_cast<HWND>(view->winId());
@@ -250,6 +259,7 @@ bool WindowsPlatform::positionWallpaper(QQuickView *view, QScreen *screen) {
                  monitor.rcMonitor.right-monitor.rcMonitor.left, monitor.rcMonitor.bottom-monitor.rcMonitor.top,
                  SWP_NOACTIVATE | SWP_SHOWWINDOW);
     if (!positioned) m_desktopError = QString("Cannot position wallpaper (%1).").arg(GetLastError());
+    else m_desktopError.clear();
     return positioned;
 }
 int WindowsPlatform::attachedCount() const {
@@ -308,7 +318,25 @@ QVariantMap WindowsPlatform::diagnostic() const {
     };
     QVariantList views;
     for (const auto &view : m_views) if (view) views << window(reinterpret_cast<HWND>(view->winId()));
+    QVariantList screens;
+    for (auto *screen : QGuiApplication::screens()) {
+        DWORD error = ERROR_SUCCESS;
+        const auto info = monitorInfo(screen, &error);
+        const auto geometry = screen->geometry();
+        auto *native = screen->nativeInterface<QNativeInterface::QWindowsScreen>();
+        screens << QVariantMap{{"name", screen->name()}, {"model", screen->model()},
+            {"primary", screen == QGuiApplication::primaryScreen()},
+            {"nativeHandle", QString::number(native ? quintptr(native->handle()) : 0, 16)},
+            {"device", QString::fromWCharArray(info.szDevice)}, {"queryError", qulonglong(error)},
+            {"devicePixelRatio", screen->devicePixelRatio()},
+            {"qtX", geometry.x()}, {"qtY", geometry.y()},
+            {"qtWidth", geometry.width()}, {"qtHeight", geometry.height()},
+            {"nativeX", int(info.rcMonitor.left)}, {"nativeY", int(info.rcMonitor.top)},
+            {"nativeWidth", int(info.rcMonitor.right-info.rcMonitor.left)},
+            {"nativeHeight", int(info.rcMonitor.bottom-info.rcMonitor.top)}};
+    }
     return {{"windows", QSysInfo::prettyProductName()}, {"kernel", QSysInfo::kernelVersion()},
+        {"qtVersion", QString::fromLatin1(qVersion())}, {"screens", screens},
         {"layout", m_raised ? "raised" : "classic"}, {"ready", desktopReady()},
         {"error", m_desktopError}, {"autostart", WindowsStartup::method()},
         {"progman", window(m_progman)}, {"worker", window(m_worker)}, {"icons", window(m_icons)}, {"views", views}};

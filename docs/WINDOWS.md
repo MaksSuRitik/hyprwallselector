@@ -42,7 +42,10 @@ retries instead of displaying a blocking top-level window. Pending selections su
 desktop reconnect attempts. Use one live wallpaper app at a time.
 If a PC cannot apply wallpapers, use **Save diagnostic report** in the tray menu.
 The JSON includes Windows version, Explorer layout, window geometry, decoder counters,
-startup timing and errors. It also contains your local wallpaper paths; it is saved
+startup timing and errors. Display diagnostics include Qt labels, native Windows device
+names, monitor handles, DPI scaling and physical bounds. Wallpaper placement uses the
+native monitor handle, not a comparison of display names or scaled coordinates.
+The report also contains your local wallpaper paths; it is saved
 locally and is never uploaded automatically.
 
 Windows does not have DMS, end-4 or Hyprland. Their shell/lock-screen palette integration is
@@ -64,8 +67,8 @@ To publish from the Windows source branch after testing:
 
 ```sh
 git push origin windows-port
-git tag windows-v0.3.2
-git push origin windows-v0.3.2
+git tag windows-v0.3.3
+git push origin windows-v0.3.3
 ```
 
 Use a new increasing version each time. `.github/workflows/windows-release.yml` builds and
@@ -96,7 +99,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake \
 
 Run `packaging/windows/build.ps1` in PowerShell with `-QtRoot C:\msys64\ucrt64`,
 `-BuildRoot C:\build\hws`, `-OutputRoot C:\build\release` and optionally
-`-InnoCompiler "C:\path\to\ISCC.exe" -Version 0.3.2`. Each bundle is assembled in a new directory.
+`-InnoCompiler "C:\path\to\ISCC.exe" -Version 0.3.3`. Each bundle is assembled in a new directory.
 The script scans PE dependencies recursively and rejects missing libraries.
 Keep the included licenses and source archive with redistributions.
 

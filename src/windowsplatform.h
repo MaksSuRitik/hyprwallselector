@@ -40,6 +40,7 @@ class WindowsPlatform final : public QObject, public QAbstractNativeEventFilter 
     static bool setHighPriority(bool enabled);
     static QVariantMap memoryStats();
     static QSize displayPixelSize();
+    static MONITORINFOEXW monitorInfo(QScreen *screen, DWORD *error = nullptr);
     static bool covers(const QRect &window, const QRect &monitor);
     static bool shortcutParts(const QString &sequence, UINT &modifiers, UINT &key);
     QVariantMap diagnostic() const;
