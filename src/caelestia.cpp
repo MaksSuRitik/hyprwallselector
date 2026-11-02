@@ -196,3 +196,69 @@ QString applyCaelestiaWallpaper(const QString &path) {
 QString openCaelestiaSettings() {
     return call({"shell", "nexus", "open"});
 }
+
+namespace {
+QString updatePlaybackJson(const QString &path, const QJsonObject &updates, bool background) {
+    QFile source(path);
+    QJsonObject object;
+    QByteArray before;
+    const bool existed = source.exists();
+    if (existed) {
+        if (!source.open(QIODevice::ReadOnly))
+            return "Cannot read native wallpaper playback settings.";
+        before = source.readAll();
+        source.close();
+        QJsonParseError error;
+        const auto document = QJsonDocument::fromJson(before, &error);
+        if (!document.isObject() || error.error != QJsonParseError::NoError)
+            return "Invalid native wallpaper playback settings; leaving them untouched.";
+        object = document.object();
+    }
+    auto values = object;
+    if (background) {
+        if (object.contains("background") && !object["background"].isObject())
+            return "Invalid native background settings.";
+        values = object["background"].toObject();
+    }
+    bool changed = false;
+    for (auto it = updates.begin(); it != updates.end(); ++it) {
+        if (values[it.key()] != it.value()) {
+            values[it.key()] = it.value();
+            changed = true;
+        }
+    }
+    if (!changed)
+        return {};
+    if (background)
+        object["background"] = values;
+    else
+        object = values;
+    QFile current(path);
+    if (current.exists() != existed ||
+        (existed && (!current.open(QIODevice::ReadOnly) || current.readAll() != before)))
+        return "Playback settings changed during the request; retry the operation.";
+    if (!QDir().mkpath(QFileInfo(path).absolutePath()) || !save(path, object))
+        return "Cannot save native wallpaper playback settings.";
+    return {};
+}
+QString pauserPath() {
+    return qEnvironmentVariable("XDG_STATE_HOME", QDir::homePath() + "/.local/state") +
+           "/caelestia/wallpaper/pauser.json";
+}
+} // namespace
+
+QString configureCaelestiaPlayback(bool battery, bool fullscreen, bool overlap) {
+    const QString shellPath =
+        QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) +
+        "/caelestia/shell.json";
+    auto error =
+        updatePlaybackJson(shellPath, {{"videoWallpaperPauseOnFullscreen", fullscreen}}, true);
+    if (!error.isEmpty())
+        return error;
+    return updatePlaybackJson(
+        pauserPath(), {{"pauseOnBattery", battery}, {"pauseOnWindowOverlap", overlap}}, false);
+}
+
+QString pauseCaelestia(bool paused) {
+    return updatePlaybackJson(pauserPath(), {{"manualPause", paused}}, false);
+}

@@ -1,6 +1,6 @@
 # Release status
 
-Version 0.2.0 is an early development release. Automated GUI tests run on an
+Version 0.2.1 is an early development release. Automated GUI tests run on an
 isolated virtual display. Real-session verification targets Hyprland and DMS;
 Caelestia/MiDnight renderer handover is covered by automated protocol/configuration
 tests and real-session image/video verification. Optional scene rendering limits

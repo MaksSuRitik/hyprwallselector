@@ -392,25 +392,44 @@ Rectangle {
                     Layout.topMargin: 20
                 }
                 Text {
-                    text: panel.tr(panel.draft.renderer === "native" ? "pauseHint" : "shellPlaybackHint")
+                    text: panel.tr(panel.draft.renderer === "end4" ? "shellPlaybackHint" : "pauseHint")
                     color: "#95a5b5"
                     font.pixelSize: 11
                     wrapMode: Text.WordWrap
                     Layout.fillWidth: true
                 }
                 SettingsToggle {
+                    objectName: "manualPauseSetting"
                     Layout.fillWidth: true
+                    text: panel.tr("pauseWallpaper")
+                    checked: panel.draft.manualPause || false
+                    enabled: panel.draft.renderer !== "end4"
+                    onToggled: panel.setDraft("manualPause", checked)
+                }
+                SettingsToggle {
+                    Layout.fillWidth: true
+                    objectName: "batteryPauseSetting"
                     text: panel.tr("battery")
                     checked: panel.draft.pauseBattery || false
-                    enabled: panel.draft.renderer === "native"
+                    enabled: panel.draft.renderer === "native" || panel.draft.renderer === "caelestia"
                     onToggled: panel.setDraft("pauseBattery", checked)
                 }
                 SettingsToggle {
                     Layout.fillWidth: true
+                    objectName: "fullscreenPauseSetting"
                     text: panel.tr("fullscreen")
                     checked: panel.draft.pauseFullscreen || false
-                    enabled: panel.draft.renderer === "native"
+                    enabled: panel.draft.renderer === "native" || panel.draft.renderer === "caelestia"
                     onToggled: panel.setDraft("pauseFullscreen", checked)
+                }
+                SettingsToggle {
+                    objectName: "windowOverlapPauseSetting"
+                    visible: panel.draft.renderer === "caelestia"
+                    Layout.fillWidth: true
+                    text: panel.tr("pauseWindowOverlap")
+                    detail: panel.tr("pauseWindowOverlapHint")
+                    checked: panel.draft.pauseWindowOverlap || false
+                    onToggled: panel.setDraft("pauseWindowOverlap", checked)
                 }
                 Item {
                     Layout.fillHeight: true

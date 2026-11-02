@@ -6,3 +6,5 @@
 QString configureCaelestia(bool enabled, bool restore = false);
 QString applyCaelestiaWallpaper(const QString &path);
 QString openCaelestiaSettings();
+QString configureCaelestiaPlayback(bool battery, bool fullscreen, bool overlap);
+QString pauseCaelestia(bool paused);

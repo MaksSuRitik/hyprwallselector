@@ -44,7 +44,9 @@ class Controller final : public QObject {
     QByteArray m_eventBuffer;
     bool m_environmentBusy = false, m_environmentPending = false;
     QHash<QString, bool> m_screenPaused;
-    QJsonArray m_monitors, m_workspaces;
+    QJsonArray m_monitors, m_clients;
+    int m_shellPauseRequest = -1;
+    void syncShellPause();
     int m_generation = 0;
     bool eventFilter(QObject *watched, QEvent *event) override;
     void load();
@@ -100,6 +102,7 @@ class Controller final : public QObject {
     Q_INVOKABLE void takeBackground();
     Q_INVOKABLE void setupDms();
     Q_INVOKABLE void shellSettings();
+    Q_INVOKABLE bool setWallpaperPaused(bool paused);
     Q_INVOKABLE bool pausedFor(QString screen) const;
     Q_INVOKABLE void quit();
     Q_INVOKABLE void captureShortcut(bool active) {

@@ -2,6 +2,7 @@
 #include "controller.h"
 #include "caelestia.h"
 #include "mediaitem.h"
+#include "wallpaperpause.h"
 #include <LayerShellQt/Window>
 #include <QCryptographicHash>
 #include <QDateTime>
@@ -228,6 +229,8 @@ Controller::Controller(bool sandbox, QObject *parent) : QObject(parent), m_sandb
     });
 }
 Controller::~Controller() {
+    if (!m_sandbox && m_config["renderer"] == "caelestia" && m_config["manageBackground"].toBool())
+        pauseCaelestia(m_config["manualPause"].toBool());
     m_scan.waitForFinished();
     qDeleteAll(m_wallpapers);
 }
@@ -241,6 +244,8 @@ void Controller::load() {
                 {"shortcutLabel", "Alt+T"},
                 {"monitor", "ALL"},
                 {"fit", "cover"},
+                {"manualPause", false},
+                {"pauseWindowOverlap", true},
                 {"pauseBattery", true},
                 {"pauseFullscreen", true},
                 {"renderer", "native"},
@@ -421,6 +426,20 @@ bool Controller::saveSettings(QVariantMap values) {
             return false;
         }
     }
+    if (!m_sandbox && newCaelestia) {
+        const auto error = configureCaelestiaPlayback(next["pauseBattery"].toBool(),
+                                                      next["pauseFullscreen"].toBool(),
+                                                      next["pauseWindowOverlap"].toBool());
+        if (!error.isEmpty()) {
+            qWarning().noquote() << error;
+            setStatus(text("caelestiaPauseError"));
+            if (oldCaelestia != newCaelestia)
+                configureCaelestia(oldCaelestia);
+            return false;
+        }
+    }
+    if (!m_sandbox && oldCaelestia && !newCaelestia)
+        pauseCaelestia(next["manualPause"].toBool());
     if (!m_sandbox && !writeJson(m_configPath, next)) {
         if (oldCaelestia != newCaelestia)
             configureCaelestia(oldCaelestia);
@@ -434,6 +453,7 @@ bool Controller::saveSettings(QVariantMap values) {
     m_config = next;
     if (backgroundChanged) {
         ++m_shellGeneration;
+        m_shellPauseRequest = -1;
         m_shellRetry.stop();
         m_shellRetries = 0;
     }
@@ -485,6 +505,15 @@ void Controller::prepareCaelestia() {
                      return;
                  if (code == 0) {
                      m_shellRetries = 0;
+                     const auto error = configureCaelestiaPlayback(
+                         m_config["pauseBattery"].toBool(), m_config["pauseFullscreen"].toBool(),
+                         m_config["pauseWindowOverlap"].toBool());
+                     if (!error.isEmpty()) {
+                         setStatus(text("caelestiaPauseError"));
+                         return;
+                     }
+                     m_shellPauseRequest = -1;
+                     syncShellPause();
                      if (QFileInfo(currentPath()).isReadable())
                          applyCaelestia(currentPath());
                  } else {
@@ -514,6 +543,38 @@ void Controller::applyCaelestia(const QString &path) {
             }
         },
         30000);
+}
+bool Controller::setWallpaperPaused(bool paused) {
+    if (m_config["renderer"] == "end4") {
+        setStatus(text("shellPlaybackHint"));
+        return false;
+    }
+    auto next = settings();
+    next["manualPause"] = paused;
+    return saveSettings(next);
+}
+void Controller::syncShellPause() {
+    if (m_sandbox || m_config["renderer"] != "caelestia" || !m_config["manageBackground"].toBool())
+        return;
+    bool fullscreen = false, allOff = !m_monitors.isEmpty();
+    for (const auto &value : m_monitors) {
+        const auto monitor = value.toObject();
+        if (monitor["dpmsStatus"].toBool(true)) {
+            allOff = false;
+            fullscreen |= wallpaperFullscreen(monitor, m_clients);
+        }
+    }
+    const bool paused = m_config["manualPause"].toBool() || m_locked || allOff ||
+                        (m_config["pauseFullscreen"].toBool() && fullscreen);
+    if (m_shellPauseRequest == int(paused))
+        return;
+    const auto error = pauseCaelestia(paused);
+    if (error.isEmpty())
+        m_shellPauseRequest = int(paused);
+    else {
+        qWarning().noquote() << error;
+        setStatus(text("caelestiaPauseError"));
+    }
 }
 void Controller::shellSettings() {
     if (m_sandbox)
@@ -711,8 +772,8 @@ void Controller::watchHyprland() {
         m_reconnect.start();
 }
 bool Controller::pausedFor(QString screen) const {
-    return m_locked || (m_battery && m_config["pauseBattery"].toBool()) ||
-           m_screenPaused.value(screen, false);
+    return m_config["manualPause"].toBool() || m_locked ||
+           (m_battery && m_config["pauseBattery"].toBool()) || m_screenPaused.value(screen, false);
 }
 void Controller::refreshEnvironment() {
     if (m_sandbox)
@@ -725,24 +786,20 @@ void Controller::refreshEnvironment() {
     asyncRun(this, "hyprctl", {"-j", "monitors"}, [this](int code, QByteArray out) {
         if (code == 0)
             m_monitors = QJsonDocument::fromJson(out).array();
-        asyncRun(this, "hyprctl", {"-j", "workspaces"}, [this](int code, QByteArray out) {
+        asyncRun(this, "hyprctl", {"-j", "clients"}, [this](int code, QByteArray out) {
             if (code == 0)
-                m_workspaces = QJsonDocument::fromJson(out).array();
+                m_clients = QJsonDocument::fromJson(out).array();
             m_screenPaused.clear();
             for (auto m : m_monitors) {
                 auto mon = m.toObject();
-                bool covered = false;
-                for (auto w : m_workspaces) {
-                    auto ws = w.toObject();
-                    if (ws["id"] == mon["activeWorkspace"].toObject()["id"] ||
-                        ws["id"] == mon["specialWorkspace"].toObject()["id"])
-                        covered |= ws["hasfullscreen"].toBool();
-                }
+                const bool covered = wallpaperFullscreen(mon, m_clients);
                 m_screenPaused[mon["name"].toString()] =
                     !mon["dpmsStatus"].toBool(true) ||
                     (covered && m_config["pauseFullscreen"].toBool());
             }
-            m_paused = m_locked || (m_battery && m_config["pauseBattery"].toBool());
+            m_paused = m_config["manualPause"].toBool() || m_locked ||
+                       (m_battery && m_config["pauseBattery"].toBool());
+            syncShellPause();
             emit pausedChanged();
             m_environmentBusy = false;
             if (m_environmentPending) {
@@ -754,7 +811,8 @@ void Controller::refreshEnvironment() {
 }
 QString Controller::diagnostic() const {
     return QString::fromUtf8(
-        QJsonDocument(QJsonObject{{"version", "0.2.0"},
+        QJsonDocument(QJsonObject{{"version", "0.2.1"},
+                                  {"caelestiaPauseRequested", m_shellPauseRequest},
                                   {"visible", m_visible},
                                   {"paused", m_paused},
                                   {"locked", m_locked},
@@ -809,13 +867,27 @@ QString Controller::text(QString key) const {
           "Обои установлены; цвета DMS не обновлены. Проверьте, запущен ли DMS."}},
         {"energy", {"Energy saving", "Енергозбереження", "Энергосбережение"}},
         {"pauseHint",
-         {"Video resumes automatically when you return.",
-          "Відео автоматично продовжиться, коли ви повернетеся.",
-          "Видео автоматически продолжится, когда вы вернётесь."}},
+         {"Automatic pauses clear when their conditions end. Manual pause waits for Resume.",
+          "Автопауза знімається, коли її причина зникає. Ручну паузу потрібно зняти самостійно.",
+          "Автопауза снимается, когда её причина исчезает. Ручную паузу нужно снять "
+          "самостоятельно."}},
         {"dmsHint",
          {"One-time setup: let Hyprwallselector draw the wallpaper while DMS manages the shell.",
           "Одноразове налаштування: шпалери малює Hyprwallselector, а оболонкою керує DMS.",
           "Однократная настройка: обои рисует Hyprwallselector, а оболочкой управляет DMS."}},
+        {"pauseWallpaper", {"Pause wallpaper", "Призупинити шпалери", "Приостановить обои"}},
+        {"resumeWallpaper",
+         {"Resume wallpaper", "Продовжити відтворення", "Продолжить воспроизведение"}},
+        {"pauseWindowOverlap", {"Pause behind windows", "Пауза за вікнами", "Пауза за окнами"}},
+        {"pauseWindowOverlapHint",
+         {"MiDnight: two visible windows or a window covering 70% of the screen.",
+          "MiDnight: два видимі вікна або вікно, що займає 70% екрана.",
+          "MiDnight: два видимых окна или окно, занимающее 70% экрана."}},
+        {"caelestiaPauseError",
+         {"Could not update the shell's wallpaper pause settings. Check the playback settings "
+          "files.",
+          "Не вдалося оновити паузи шпалер оболонки. Перевірте файли налаштувань відтворення.",
+          "Не удалось обновить паузы обоев оболочки. Проверьте файлы настроек воспроизведения."}},
         {"shellPlaybackHint",
          {"Displays, fitting and playback are controlled by the selected shell renderer.",
           "Дисплеї, масштабування й відтворення налаштовуються в обраному рушії оболонки.",
@@ -824,7 +896,7 @@ QString Controller::text(QString key) const {
          {"Uses native transitions, GIF/video playback, wallpaper recoloring and dynamic colors. "
           "MiDnight also supports Wallpaper Engine projects. All available effects, sound, decoder "
           "and pause options remain in the shell settings.",
-          "Рідні переходи, GIF і відео, тонування шпалер і динамічні кольори. MiDnight також "
+          "Вбудовані переходи, GIF і відео, тонування шпалер і динамічні кольори. MiDnight також "
           "підтримує проєкти Wallpaper Engine. Доступні ефекти, звук, декодер і паузи "
           "налаштовуються в оболонці.",
           "Родные переходы, GIF и видео, тонирование обоев и динамические цвета. MiDnight также "

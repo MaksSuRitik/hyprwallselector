@@ -26,7 +26,7 @@ int main(int argc, char **argv) {
     Q_INIT_RESOURCE(ui);
     Q_INIT_RESOURCE(shaders);
     QCoreApplication::setApplicationName("hyprwallselector");
-    QCoreApplication::setApplicationVersion("0.2.0");
+    QCoreApplication::setApplicationVersion("0.2.1");
     QCoreApplication::setOrganizationName("Hyprwallselector");
     QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
     QQuickStyle::setStyle("Basic");
@@ -45,6 +45,8 @@ int main(int argc, char **argv) {
     args.addOptions({{"daemon", "Start hidden and restore wallpapers"},
                      {"toggle", "Show/hide the selector"},
                      {"quit", "Quit the running instance"},
+                     {"pause", "Pause the current desktop wallpaper"},
+                     {"resume", "Resume the current desktop wallpaper"},
                      {"diagnose", "Print running instance status"},
                      {"preview", "Isolated UI preview: no hotkeys or wallpaper changes"},
                      {"exit-after", "Exit after N milliseconds (testing)", "ms"}});
@@ -85,7 +87,9 @@ int main(int argc, char **argv) {
     QDir().mkpath(runtime);
     QFile::setPermissions(runtime, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
     QString socket = runtime + "/control";
-    QString command = args.isSet("quit")       ? "quit"
+    QString command = args.isSet("pause")      ? "pause"
+                      : args.isSet("resume")   ? "resume"
+                      : args.isSet("quit")     ? "quit"
                       : args.isSet("diagnose") ? "diagnose"
                       : args.isSet("daemon")   ? "ping"
                                                : "toggle";
@@ -95,11 +99,15 @@ int main(int argc, char **argv) {
         if (client.waitForConnected(250)) {
             client.write(command.toUtf8() + "\n");
             client.waitForBytesWritten(500);
-            if (client.waitForReadyRead(1000))
-                QTextStream(stdout) << client.readAll();
+            if (client.waitForReadyRead(1000)) {
+                const auto response = client.readAll();
+                QTextStream(stdout) << response;
+                return response.startsWith("ERROR") ? 1 : 0;
+            }
             return 0;
         }
-        if (args.isSet("quit") || args.isSet("diagnose")) {
+        if (args.isSet("quit") || args.isSet("diagnose") || args.isSet("pause") ||
+            args.isSet("resume")) {
             QTextStream(stderr) << "No running Hyprwallselector instance.\n";
             return 1;
         }
@@ -151,12 +159,18 @@ int main(int argc, char **argv) {
                     if (!client->canReadLine())
                         return;
                     QByteArray msg = client->readLine().trimmed();
+                    bool accepted = true;
                     if (msg == "toggle")
                         backend.toggle();
+                    else if (msg == "pause" || msg == "resume")
+                        accepted = backend.setWallpaperPaused(msg == "pause");
                     else if (msg == "quit")
                         QTimer::singleShot(20, &app, &QGuiApplication::quit);
-                    client->write(msg == "diagnose" ? backend.diagnostic().toUtf8()
-                                                    : QByteArray("OK\n"));
+                    client->write(
+                        msg == "diagnose"
+                            ? backend.diagnostic().toUtf8()
+                            : QByteArray(accepted ? "OK\n"
+                                                  : "ERROR: wallpaper settings were not saved\n"));
                     client->flush();
                     client->disconnectFromServer();
                 });

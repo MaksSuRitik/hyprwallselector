@@ -106,6 +106,17 @@ class TestUi : public QObject {
             QCOMPARE(root->property("selected").toInt(), (index + 1) % backend->items().size());
         }
     }
+    void manualWallpaperPauseButton() {
+        auto *button = view->rootObject()->findChild<QQuickItem *>("wallpaperPauseButton");
+        QVERIFY(button && button->isVisible());
+        for (bool pause : {true, false}) {
+            QTest::mouseClick(
+                view, Qt::LeftButton, Qt::NoModifier,
+                button->mapToScene(QPointF(button->width() / 2, button->height() / 2)).toPoint());
+            QCOMPARE(backend->settings()["manualPause"].toBool(), pause);
+            QCOMPARE(backend->pausedFor("TEST"), pause);
+        }
+    }
     void caelestiaRendererSettings() {
         const auto original = backend->settings();
         auto settings = original;
@@ -147,6 +158,15 @@ class TestUi : public QObject {
         QTest::qWait(60);
         auto *display = root->findChild<QQuickItem *>("displaySetting");
         QVERIFY(display && !display->isEnabled());
+        auto *battery = root->findChild<QQuickItem *>("batteryPauseSetting");
+        auto *fullscreen = root->findChild<QQuickItem *>("fullscreenPauseSetting");
+        QVERIFY(battery && fullscreen && battery->isEnabled() && fullscreen->isEnabled());
+        QVERIFY(root->findChild<QQuickItem *>("manualPauseSetting")->isEnabled());
+        QVERIFY(root->findChild<QQuickItem *>("windowOverlapPauseSetting")->isVisible());
+        QTest::qWait(280);
+        if (!qEnvironmentVariable("HWS_TEST_SETTINGS_SCREENSHOT").isEmpty())
+            QVERIFY(view->grabWindow().save(qEnvironmentVariable("HWS_TEST_SETTINGS_SCREENSHOT") +
+                                            "-uk-pauses.png"));
         QTest::keyClick(view, Qt::Key_Escape);
         QTRY_VERIFY(!root->property("settingsOpen").toBool());
         QVERIFY(QDir(fixture.path() + "/library/scene").removeRecursively());

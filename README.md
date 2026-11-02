@@ -99,7 +99,17 @@ wallpaper renderer should own each display.
   surfaces. Selections use `caelestia shell wallpaper set`; a read-back confirms
   the selected path. Shell sources are never patched.
   The shell owns transitions, recoloring, dynamic palettes, lock-screen appearance,
-  desktop widgets, fitting and per-display behavior. **Open Caelestia / MiDnight
+  desktop widgets, fitting and per-display behavior. The selector's Playback tab
+  controls manual pause, battery pause, fullscreen pause and MiDnight's separate
+  pause-behind-windows rule. A Pause/Resume button is also available above the
+  carousel, and `hyprwallselector --pause` / `--resume` control the running instance.
+  Battery/overlap settings use MiDnight's watched `wallpaper/pauser.json`; existing
+  decoder preferences are preserved. Manual/automatic requests pause the actual
+  shell player. Fullscreen detection follows visible clients on active normal and
+  special workspaces (including current Hyprland JSON); keep the selector daemon
+  running for this fallback on MiDnight versions whose new video player does not
+  implement the shell's fullscreen setting. Other automatic pause conditions still
+  apply after a manual resume. **Open Caelestia / MiDnight
   settings** opens its native controls, including the effects, video sound,
   hardware decoder and automatic pause options available in that shell version.
   Existing choices are preserved; dynamic colors require the shell's Dynamic scheme.
@@ -131,8 +141,8 @@ The real-session renderer handover is verified on MiDnight commit `f4ade958c1`
 with matching CLI `e6b4900fd`. Wallpaper Engine project dispatch is covered with
 an isolated protocol fixture; a real scene renderer is an optional dependency.
 End-4's interface is checked against upstream source. Shell APIs can change.
-The external shell renderers control their own monitor and playback settings;
-the selector's per-display and pause controls apply to its native renderer.
+External shell renderers control their own monitor settings. MiDnight playback
+controls are available in the selector; end-4 controls remain in its own shell.
 
 ## Configuration and recovery
 

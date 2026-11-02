@@ -101,11 +101,20 @@ Item {
                 duration: 170
             }
         }
-        SoftButton {
+        Row {
             anchors.horizontalCenter: parent.horizontalCenter
             y: 35
-            text: root.tr("settings")
-            onClicked: root.openSettings()
+            spacing: 12
+            SoftButton {
+                text: root.tr("settings")
+                onClicked: root.openSettings()
+            }
+            SoftButton {
+                objectName: "wallpaperPauseButton"
+                visible: backend.settings.renderer !== "end4"
+                text: root.tr(backend.settings.manualPause ? "resumeWallpaper" : "pauseWallpaper")
+                onClicked: backend.setWallpaperPaused(!backend.settings.manualPause)
+            }
         }
         Repeater {
             model: root.entries

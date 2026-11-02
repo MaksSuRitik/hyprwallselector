@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "caelestia.h"
+#include "wallpaperpause.h"
 #include <QDir>
 #include <QFile>
 #include <QJsonArray>
@@ -113,6 +114,53 @@ class TestCaelestia : public QObject {
         QVERIFY(!configureCaelestia(true).isEmpty());
         QCOMPARE(read(), initial);
         QVERIFY(!QFile::exists(backupPath));
+    }
+    void playbackPreferencesAndManualPausePreserveDecoder() {
+        write({{"background", QJsonObject{{"wallpaperEnabled", true}}}, {"untouched", 42}});
+        const QString pauser = fixture.path() + "/state/caelestia/wallpaper/pauser.json";
+        QDir().mkpath(QFileInfo(pauser).absolutePath());
+        QFile file(pauser);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("{\"hwDecoder\":\"vaapi\",\"custom\":42}");
+        file.close();
+        QCOMPARE(configureCaelestiaPlayback(true, true, false), QString());
+        QCOMPARE(read()["untouched"].toInt(), 42);
+        QVERIFY(read()["background"].toObject()["videoWallpaperPauseOnFullscreen"].toBool());
+        QCOMPARE(pauseCaelestia(true), QString());
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        auto values = QJsonDocument::fromJson(file.readAll()).object();
+        file.close();
+        QVERIFY(values["manualPause"].toBool());
+        QVERIFY(values["pauseOnBattery"].toBool());
+        QVERIFY(!values["pauseOnWindowOverlap"].toBool());
+        QCOMPARE(values["hwDecoder"].toString(), QString("vaapi"));
+        QCOMPARE(values["custom"].toInt(), 42);
+        QCOMPARE(pauseCaelestia(false), QString());
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QVERIFY(!QJsonDocument::fromJson(file.readAll()).object()["manualPause"].toBool());
+        file.close();
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("{");
+        file.close();
+        QVERIFY(!pauseCaelestia(true).isEmpty());
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QCOMPARE(file.readAll(), QByteArray("{"));
+    }
+    void fullscreenUsesVisibleClientsNotRemovedWorkspaceFlags() {
+        const QJsonObject monitor{{"activeWorkspace", QJsonObject{{"name", "1"}}},
+                                  {"specialWorkspace", QJsonObject{{"name", "special:music"}}}};
+        QJsonObject client{
+            {"workspace", QJsonObject{{"name", "1"}}}, {"fullscreen", 2}, {"mapped", true}};
+        QVERIFY(wallpaperFullscreen(monitor, {client}));
+        client["workspace"] = QJsonObject{{"name", "2"}};
+        QVERIFY(!wallpaperFullscreen(monitor, {client}));
+        client["workspace"] = QJsonObject{{"name", "special:music"}};
+        QVERIFY(wallpaperFullscreen(monitor, {client}));
+        client["fullscreen"] = 1;
+        QVERIFY(!wallpaperFullscreen(monitor, {client}));
+        client["fullscreen"] = 2;
+        client["hidden"] = true;
+        QVERIFY(!wallpaperFullscreen(monitor, {client}));
     }
     void wallpaperEngineProjectDelegatesManifest() {
         QVERIFY(QFile::link(QCoreApplication::applicationFilePath(),
