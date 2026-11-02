@@ -33,7 +33,11 @@ class Controller final : public QObject {
     QQuickView *m_view = nullptr;
     QList<QQuickView *> m_wallpapers;
     QLocalSocket m_events;
-    QTimer m_refresh, m_reconnect, m_scanDelay;
+    QTimer m_refresh, m_reconnect, m_scanDelay, m_shellRetry;
+    int m_shellRetries = 0;
+    quint64 m_shellGeneration = 0;
+    void prepareCaelestia();
+    void applyCaelestia(const QString &path);
     QFileSystemWatcher m_files;
     QFutureWatcher<QVariantList> m_scan;
     QString m_pendingFolder, m_allRequest;
@@ -95,6 +99,7 @@ class Controller final : public QObject {
     Q_INVOKABLE void openFolder();
     Q_INVOKABLE void takeBackground();
     Q_INVOKABLE void setupDms();
+    Q_INVOKABLE void shellSettings();
     Q_INVOKABLE bool pausedFor(QString screen) const;
     Q_INVOKABLE void quit();
     Q_INVOKABLE void captureShortcut(bool active) {

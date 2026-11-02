@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "caelestia.h"
 #include "controller.h"
 #include "integration.h"
 #include "mediaitem.h"
@@ -25,7 +26,7 @@ int main(int argc, char **argv) {
     Q_INIT_RESOURCE(ui);
     Q_INIT_RESOURCE(shaders);
     QCoreApplication::setApplicationName("hyprwallselector");
-    QCoreApplication::setApplicationVersion("0.1.0");
+    QCoreApplication::setApplicationVersion("0.2.0");
     QCoreApplication::setOrganizationName("Hyprwallselector");
     QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
     QQuickStyle::setStyle("Basic");
@@ -47,11 +48,35 @@ int main(int argc, char **argv) {
                      {"diagnose", "Print running instance status"},
                      {"preview", "Isolated UI preview: no hotkeys or wallpaper changes"},
                      {"exit-after", "Exit after N milliseconds (testing)", "ms"}});
+    args.addOption(
+        {"integrate-caelestia", "Enable the Caelestia renderer, backing up its background flags"});
+    args.addOption(
+        {"external-caelestia", "Hand wallpaper rendering from Caelestia to another renderer"});
+    args.addOption(
+        {"restore-caelestia", "Restore the original backed-up Caelestia background flags"});
+    args.addOption(
+        {"caelestia-wallpaper", "Apply a local wallpaper through Caelestia IPC", "path"});
+    args.addOption({"caelestia-settings", "Open the native Caelestia/MiDnight settings"});
     args.process(app);
     if (args.isSet("integrate-dms") || args.isSet("restore-dms")) {
         QString error = configureDms(args.isSet("restore-dms"));
         QTextStream(stdout) << (error.isEmpty() ? "DMS wallpaper preference updated." : error)
                             << "\n";
+        return error.isEmpty() ? 0 : 1;
+    }
+    if (args.isSet("integrate-caelestia") || args.isSet("external-caelestia") ||
+        args.isSet("restore-caelestia") || args.isSet("caelestia-wallpaper") ||
+        args.isSet("caelestia-settings")) {
+        QString error;
+        if (args.isSet("caelestia-wallpaper"))
+            error = applyCaelestiaWallpaper(args.value("caelestia-wallpaper"));
+        else if (args.isSet("caelestia-settings"))
+            error = openCaelestiaSettings();
+        else
+            error = configureCaelestia(args.isSet("integrate-caelestia"),
+                                       args.isSet("restore-caelestia"));
+        QTextStream(error.isEmpty() ? stdout : stderr)
+            << (error.isEmpty() ? "Caelestia request completed." : error) << "\n";
         return error.isEmpty() ? 0 : 1;
     }
     bool preview = args.isSet("preview");

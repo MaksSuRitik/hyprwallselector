@@ -106,6 +106,53 @@ class TestUi : public QObject {
             QCOMPARE(root->property("selected").toInt(), (index + 1) % backend->items().size());
         }
     }
+    void caelestiaRendererSettings() {
+        const auto original = backend->settings();
+        auto settings = original;
+        settings["renderer"] = "caelestia";
+        settings["language"] = "uk";
+        QDir().mkpath(fixture.path() + "/library/scene");
+        QVERIFY(QFile::copy(fixture.path() + "/library/image #0.png",
+                            fixture.path() + "/library/scene/preview.png"));
+        QFile manifest(fixture.path() + "/library/scene/project.json");
+        QVERIFY(manifest.open(QIODevice::WriteOnly));
+        manifest.write("{\"preview\":\"preview.png\",\"title\":\"Scene\"}");
+        manifest.close();
+        QVERIFY(backend->saveSettings(settings));
+        QTRY_VERIFY_WITH_TIMEOUT(!backend->busy(), 10000);
+        bool found = false;
+        for (const auto &item : backend->items())
+            if (item.toMap()["project"].toBool()) {
+                found = true;
+                QVERIFY(item.toMap()["path"].toString().endsWith("/scene/project.json"));
+                QVERIFY(item.toMap()["url"].toString().endsWith("/scene/preview.png"));
+            }
+        QVERIFY(found);
+        auto *root = view->rootObject();
+        QVERIFY(QMetaObject::invokeMethod(root, "openSettings"));
+        auto *panel = root->findChild<QQuickItem *>("settingsPanel");
+        QVERIFY(panel);
+        panel->setProperty("tab", 2);
+        QTest::qWait(300);
+        auto *renderer = root->findChild<QQuickItem *>("rendererSetting");
+        auto *button = root->findChild<QQuickItem *>("caelestiaSettingsButton");
+        QVERIFY(renderer && button);
+        QCOMPARE(renderer->property("currentIndex").toInt(), 2);
+        QVERIFY(button->isVisible());
+        QVERIFY(button->property("text").toString().contains("Налаштування"));
+        if (!qEnvironmentVariable("HWS_TEST_SETTINGS_SCREENSHOT").isEmpty())
+            QVERIFY(view->grabWindow().save(qEnvironmentVariable("HWS_TEST_SETTINGS_SCREENSHOT") +
+                                            "-uk-caelestia.png"));
+        panel->setProperty("tab", 1);
+        QTest::qWait(60);
+        auto *display = root->findChild<QQuickItem *>("displaySetting");
+        QVERIFY(display && !display->isEnabled());
+        QTest::keyClick(view, Qt::Key_Escape);
+        QTRY_VERIFY(!root->property("settingsOpen").toBool());
+        QVERIFY(QDir(fixture.path() + "/library/scene").removeRecursively());
+        QVERIFY(backend->saveSettings(original));
+        QTRY_VERIFY_WITH_TIMEOUT(!backend->busy(), 10000);
+    }
     void settingsDraftAndScreenshots() {
         auto *root = view->rootObject();
         auto *panel = root->findChild<QQuickItem *>("settingsPanel");

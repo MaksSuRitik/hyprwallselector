@@ -378,6 +378,8 @@ Rectangle {
                     }
                     SettingsCombo {
                         id: display
+                        objectName: "displaySetting"
+                        enabled: panel.draft.renderer === "native"
                         model: backend.screens.map(s => s === "ALL" ? panel.tr("all") : s)
                         onActivated: panel.setDraft("monitor", backend.screens[currentIndex])
                     }
@@ -390,7 +392,7 @@ Rectangle {
                     Layout.topMargin: 20
                 }
                 Text {
-                    text: panel.tr("pauseHint")
+                    text: panel.tr(panel.draft.renderer === "native" ? "pauseHint" : "shellPlaybackHint")
                     color: "#95a5b5"
                     font.pixelSize: 11
                     wrapMode: Text.WordWrap
@@ -400,14 +402,14 @@ Rectangle {
                     Layout.fillWidth: true
                     text: panel.tr("battery")
                     checked: panel.draft.pauseBattery || false
-                    enabled: panel.draft.renderer !== "end4"
+                    enabled: panel.draft.renderer === "native"
                     onToggled: panel.setDraft("pauseBattery", checked)
                 }
                 SettingsToggle {
                     Layout.fillWidth: true
                     text: panel.tr("fullscreen")
                     checked: panel.draft.pauseFullscreen || false
-                    enabled: panel.draft.renderer !== "end4"
+                    enabled: panel.draft.renderer === "native"
                     onToggled: panel.setDraft("pauseFullscreen", checked)
                 }
                 Item {
@@ -431,9 +433,10 @@ Rectangle {
                     }
                     SettingsCombo {
                         id: renderer
-                        model: ["Hyprwallselector", "end-4 (ii)"]
-                        currentIndex: panel.draft.renderer === "end4" ? 1 : 0
-                        onActivated: panel.setDraft("renderer", currentIndex === 1 ? "end4" : "native")
+                        objectName: "rendererSetting"
+                        model: ["Hyprwallselector", "end-4 (ii)", "Caelestia / MiDnight"]
+                        currentIndex: Math.max(0, ["native", "end4", "caelestia"].indexOf(panel.draft.renderer))
+                        onActivated: panel.setDraft("renderer", ["native", "end4", "caelestia"][currentIndex])
                     }
                 }
                 SettingsToggle {
@@ -449,11 +452,12 @@ Rectangle {
                 }
                 SettingsToggle {
                     objectName: "dmsColorsSetting"
+                    visible: panel.draft.renderer === "native"
                     Layout.fillWidth: true
                     text: panel.tr("syncDmsColors")
                     detail: panel.tr("paletteHint")
                     checked: panel.draft.syncDmsColors || false
-                    enabled: panel.draft.renderer !== "end4"
+                    enabled: panel.draft.renderer === "native"
                     onToggled: panel.setDraft("syncDmsColors", checked)
                 }
                 Text {
@@ -463,15 +467,29 @@ Rectangle {
                     font.pixelSize: 11
                     wrapMode: Text.WordWrap
                     lineHeight: 1.2
-                    visible: panel.draft.renderer !== "end4"
+                    visible: panel.draft.renderer === "native"
                 }
                 SoftButton {
                     text: panel.tr("dmsMode")
-                    visible: panel.draft.renderer !== "end4"
+                    visible: panel.draft.renderer === "native"
                     onClicked: backend.setupDms()
                 }
                 Text {
-                    text: panel.tr("backgroundHint")
+                    visible: panel.draft.renderer === "caelestia"
+                    text: panel.tr("caelestiaHint")
+                    color: "#a3b6c7"
+                    font.pixelSize: 11
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+                SoftButton {
+                    objectName: "caelestiaSettingsButton"
+                    visible: panel.draft.renderer === "caelestia"
+                    text: panel.tr("caelestiaSettings")
+                    onClicked: backend.shellSettings()
+                }
+                Text {
+                    text: panel.tr(panel.draft.renderer === "caelestia" ? "caelestiaHandoverHint" : "backgroundHint")
                     color: "#95a5b5"
                     wrapMode: Text.WordWrap
                     Layout.fillWidth: true

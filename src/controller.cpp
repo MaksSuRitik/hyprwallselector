@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "controller.h"
+#include "caelestia.h"
 #include "mediaitem.h"
 #include <LayerShellQt/Window>
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QDebug>
 #include <QDesktopServices>
 #include <QDir>
 #include <QFileInfo>
@@ -47,14 +49,14 @@ bool videoFile(const QString &path) {
         .contains(QFileInfo(path).suffix().toLower());
 }
 void asyncRun(QObject *owner, const QString &program, const QStringList &args,
-              std::function<void(int, QByteArray)> done = {}) {
+              std::function<void(int, QByteArray)> done = {}, int timeoutMs = 15000) {
     auto *p = new QProcess(owner);
     auto *timeout = new QTimer(p);
     timeout->setSingleShot(true);
     QObject::connect(timeout, &QTimer::timeout, p, &QProcess::kill);
     QObject::connect(p, &QProcess::finished, owner, [p, done](int code, QProcess::ExitStatus) {
         if (done)
-            done(code, p->readAllStandardOutput());
+            done(code, p->readAllStandardOutput() + p->readAllStandardError());
         p->deleteLater();
     });
     QObject::connect(p, &QProcess::errorOccurred, owner, [p, done](QProcess::ProcessError e) {
@@ -65,7 +67,7 @@ void asyncRun(QObject *owner, const QString &program, const QStringList &args,
         }
     });
     p->start(program, args);
-    timeout->start(15000);
+    timeout->start(timeoutMs);
 }
 QString localPath(QString path) {
     if (path.startsWith("file:"))
@@ -74,20 +76,39 @@ QString localPath(QString path) {
         path.replace(0, 1, QDir::homePath());
     return QDir::cleanPath(path);
 }
-QVariantList catalogue(const QString &folder) {
+QVariantList catalogue(const QString &folder, bool projects) {
     QVariantList entries;
     QDir dir(folder);
-    auto files = dir.entryInfoList(QDir::Files | QDir::Readable, QDir::Name | QDir::IgnoreCase);
+    auto files = dir.entryInfoList(
+        (projects ? QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot : QDir::Files) | QDir::Readable,
+        QDir::Name | QDir::IgnoreCase);
     const auto formats = QImageReader::supportedImageFormats();
     QString cache = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) +
                     "/hyprwallselector/thumbs";
     QDir().mkpath(cache);
     for (const auto &f : files) {
-        const bool video = videoFile(f.filePath());
-        if (!video && !formats.contains(f.suffix().toLower().toUtf8()))
+        QFileInfo media = f;
+        QString path = f.absoluteFilePath(), title = f.completeBaseName();
+        const bool project = projects && (f.isDir() || f.fileName() == "project.json");
+        if (project) {
+            const QFileInfo manifest(f.isDir() ? f.filePath() + "/project.json" : f.filePath());
+            QFile json(manifest.filePath());
+            if (!json.open(QIODevice::ReadOnly))
+                continue;
+            const auto object = QJsonDocument::fromJson(json.readAll()).object();
+            const QString preview = QFileInfo(manifest.dir().filePath(object["preview"].toString()))
+                                        .canonicalFilePath();
+            if (preview.isEmpty() || !preview.startsWith(manifest.canonicalPath() + "/"))
+                continue;
+            media = QFileInfo(preview);
+            path = manifest.canonicalFilePath();
+            title = object["title"].toString(manifest.dir().dirName());
+        }
+        const bool video = !project && videoFile(media.filePath());
+        if (!video && !formats.contains(media.suffix().toLower().toUtf8()))
             continue;
-        QByteArray key = (f.absoluteFilePath() + QString::number(f.size()) +
-                          QString::number(f.lastModified().toMSecsSinceEpoch()))
+        QByteArray key = (media.absoluteFilePath() + QString::number(media.size()) +
+                          QString::number(media.lastModified().toMSecsSinceEpoch()))
                              .toUtf8();
         QString thumb = cache + "/" +
                         QCryptographicHash::hash(key, QCryptographicHash::Sha256).toHex() + ".jpg";
@@ -97,7 +118,7 @@ QVariantList catalogue(const QString &folder) {
             if (video) {
                 QProcess ff;
                 ff.start("ffmpeg", {"-nostdin", "-v", "error", "-y", "-threads", "2", "-ss", "0.1",
-                                    "-i", f.absoluteFilePath(), "-frames:v", "1", "-vf",
+                                    "-i", media.absoluteFilePath(), "-frames:v", "1", "-vf",
                                     "scale=720:480:force_original_aspect_ratio=decrease",
                                     "-threads", "2", temporary});
                 if (!ff.waitForFinished(15000)) {
@@ -107,7 +128,7 @@ QVariantList catalogue(const QString &folder) {
                 if (ff.exitStatus() == QProcess::NormalExit && ff.exitCode() == 0)
                     QFile::rename(temporary, thumb);
             } else {
-                QImageReader reader(f.absoluteFilePath());
+                QImageReader reader(media.absoluteFilePath());
                 reader.setAutoTransform(true);
                 QSize size = reader.size();
                 if (size.isValid())
@@ -118,12 +139,14 @@ QVariantList catalogue(const QString &folder) {
             }
             QFile::remove(temporary);
         }
-        entries.append(QVariantMap{{"path", f.absoluteFilePath()},
-                                   {"url", QUrl::fromLocalFile(f.absoluteFilePath()).toString()},
-                                   {"thumb", QUrl::fromLocalFile(thumb).toString()},
-                                   {"title", f.completeBaseName()},
-                                   {"format", f.suffix().toUpper()},
-                                   {"video", video}});
+        entries.append(
+            QVariantMap{{"path", path},
+                        {"url", QUrl::fromLocalFile(media.absoluteFilePath()).toString()},
+                        {"thumb", QUrl::fromLocalFile(thumb).toString()},
+                        {"title", title},
+                        {"format", project ? "WALLPAPER ENGINE" : f.suffix().toUpper()},
+                        {"video", video},
+                        {"project", project}});
     }
     std::stable_sort(entries.begin(), entries.end(), [](const QVariant &a, const QVariant &b) {
         return a.toMap()["video"].toBool() > b.toMap()["video"].toBool();
@@ -171,6 +194,9 @@ Controller::Controller(bool sandbox, QObject *parent) : QObject(parent), m_sandb
         if (!m_sandbox)
             m_reconnect.start();
     });
+    m_shellRetry.setSingleShot(true);
+    m_shellRetry.setInterval(3000);
+    connect(&m_shellRetry, &QTimer::timeout, this, &Controller::prepareCaelestia);
     m_scanDelay.setSingleShot(true);
     m_scanDelay.setInterval(350);
     connect(&m_scanDelay, &QTimer::timeout, this, &Controller::scan);
@@ -188,7 +214,7 @@ Controller::Controller(bool sandbox, QObject *parent) : QObject(parent), m_sandb
     connect(qGuiApp, &QGuiApplication::screenAdded, this, [this](QScreen *s) {
         emit screensChanged();
         if (!m_sandbox && m_config["manageBackground"].toBool() &&
-            m_config["renderer"].toString() != "end4")
+            m_config["renderer"].toString() == "native")
             createWallpaper(s);
     });
     connect(qGuiApp, &QGuiApplication::screenRemoved, this, [this](QScreen *s) {
@@ -240,7 +266,8 @@ void Controller::load() {
     }
 }
 QString Controller::currentPath() const {
-    QString monitor = m_config["monitor"].toString("ALL");
+    QString monitor =
+        m_config["renderer"].toString() == "native" ? m_config["monitor"].toString("ALL") : "ALL";
     auto v = m_state.value(monitor).toObject();
     if (v.isEmpty())
         v = m_state.value("ALL").toObject();
@@ -275,11 +302,13 @@ void Controller::start(bool show) {
         refreshSession();
         registerHotkey();
         watchHyprland();
-        if (m_config["manageBackground"].toBool() && m_config["renderer"].toString() != "end4")
+        if (m_config["manageBackground"].toBool() && m_config["renderer"].toString() == "native")
             for (auto *s : qGuiApp->screens())
                 createWallpaper(s);
     } else
         m_locked = false;
+    if (!m_sandbox && m_config["manageBackground"].toBool() && m_config["renderer"] == "caelestia")
+        QTimer::singleShot(0, this, &Controller::prepareCaelestia);
     if (show)
         toggle();
 }
@@ -344,7 +373,7 @@ void Controller::scan() {
         m_files.addPath(folder);
     m_busy = true;
     emit busyChanged();
-    m_scan.setFuture(QtConcurrent::run(catalogue, folder));
+    m_scan.setFuture(QtConcurrent::run(catalogue, folder, m_config["renderer"] == "caelestia"));
 }
 void Controller::setStatus(const QString &value) {
     m_status = value;
@@ -379,7 +408,22 @@ bool Controller::saveSettings(QVariantMap values) {
     next["folder"] = folder;
     if (!QStringList{"en", "uk", "ru"}.contains(next["language"].toString()))
         next["language"] = "en";
+    if (!QStringList{"native", "end4", "caelestia"}.contains(next["renderer"].toString()))
+        next["renderer"] = "native";
+    const bool oldCaelestia =
+        m_config["renderer"] == "caelestia" && m_config["manageBackground"].toBool();
+    const bool newCaelestia = next["renderer"] == "caelestia" && next["manageBackground"].toBool();
+    if (!m_sandbox && oldCaelestia != newCaelestia) {
+        const auto error = configureCaelestia(newCaelestia);
+        if (!error.isEmpty()) {
+            qWarning().noquote() << error;
+            setStatus(text("caelestiaSetupError"));
+            return false;
+        }
+    }
     if (!m_sandbox && !writeJson(m_configPath, next)) {
+        if (oldCaelestia != newCaelestia)
+            configureCaelestia(oldCaelestia);
         setStatus(text("saveError"));
         return false;
     }
@@ -388,13 +432,18 @@ bool Controller::saveSettings(QVariantMap values) {
     bool backgroundChanged = next["manageBackground"] != m_config["manageBackground"] ||
                              next["renderer"] != m_config["renderer"];
     m_config = next;
+    if (backgroundChanged) {
+        ++m_shellGeneration;
+        m_shellRetry.stop();
+        m_shellRetries = 0;
+    }
     m_palette.setEnabled(!m_sandbox && next["syncDmsColors"].toBool() &&
                          next["manageBackground"].toBool() &&
                          next["renderer"].toString() == "native");
     emit settingsChanged();
     emit currentChanged();
     setStatus("");
-    if (folderChanged)
+    if (folderChanged || backgroundChanged)
         scan();
     if (keyChanged)
         registerHotkey();
@@ -415,14 +464,67 @@ bool Controller::saveSettings(QVariantMap values) {
         if (backgroundChanged) {
             qDeleteAll(m_wallpapers);
             m_wallpapers.clear();
-            if (next["manageBackground"].toBool() && next["renderer"].toString() != "end4")
+            if (next["manageBackground"].toBool() && next["renderer"].toString() == "native")
                 for (auto *s : qGuiApp->screens())
                     createWallpaper(s);
         }
         m_refresh.start();
         syncPalette();
+        if (backgroundChanged && newCaelestia && QFileInfo(currentPath()).isReadable())
+            applyCaelestia(currentPath());
     }
     return true;
+}
+void Controller::prepareCaelestia() {
+    if (m_sandbox || m_config["renderer"] != "caelestia" || !m_config["manageBackground"].toBool())
+        return;
+    const auto generation = m_shellGeneration;
+    asyncRun(this, QCoreApplication::applicationFilePath(), {"--integrate-caelestia"},
+             [this, generation](int code, QByteArray) {
+                 if (generation != m_shellGeneration)
+                     return;
+                 if (code == 0) {
+                     m_shellRetries = 0;
+                     if (QFileInfo(currentPath()).isReadable())
+                         applyCaelestia(currentPath());
+                 } else {
+                     setStatus(text("caelestiaSetupError"));
+                     if (++m_shellRetries < 10)
+                         m_shellRetry.start();
+                 }
+             });
+}
+void Controller::applyCaelestia(const QString &path) {
+    const auto generation = ++m_shellGeneration;
+    asyncRun(
+        this, QCoreApplication::applicationFilePath(), {"--caelestia-wallpaper", path},
+        [this, generation, path](int code, QByteArray output) {
+            if (generation != m_shellGeneration || m_config["renderer"] != "caelestia" ||
+                !m_config["manageBackground"].toBool())
+                return;
+            if (code == 0) {
+                setStatus("");
+                m_allRequest = path;
+                wallpaperReady("ALL", path);
+                hide();
+            } else {
+                qWarning().noquote() << output;
+                setStatus(text(output.contains("filenames") ? "caelestiaPathError"
+                                                            : "caelestiaApplyError"));
+            }
+        },
+        30000);
+}
+void Controller::shellSettings() {
+    if (m_sandbox)
+        return;
+    asyncRun(this, QCoreApplication::applicationFilePath(), {"--caelestia-settings"},
+             [this](int code, QByteArray) {
+                 if (code == 0)
+                     hide();
+                 else
+                     setStatus(text("caelestiaSetupError"));
+             });
 }
 void Controller::setupDms() {
     if (m_sandbox) {
@@ -469,6 +571,10 @@ void Controller::apply(int index) {
                      } else
                          setStatus("end-4 wallpaper IPC is unavailable.");
                  });
+        return;
+    }
+    if (m_config["renderer"] == "caelestia") {
+        applyCaelestia(path);
         return;
     }
     QString target = m_config["monitor"].toString("ALL");
@@ -648,7 +754,7 @@ void Controller::refreshEnvironment() {
 }
 QString Controller::diagnostic() const {
     return QString::fromUtf8(
-        QJsonDocument(QJsonObject{{"version", "0.1.0"},
+        QJsonDocument(QJsonObject{{"version", "0.2.0"},
                                   {"visible", m_visible},
                                   {"paused", m_paused},
                                   {"locked", m_locked},
@@ -710,6 +816,51 @@ QString Controller::text(QString key) const {
          {"One-time setup: let Hyprwallselector draw the wallpaper while DMS manages the shell.",
           "Одноразове налаштування: шпалери малює Hyprwallselector, а оболонкою керує DMS.",
           "Однократная настройка: обои рисует Hyprwallselector, а оболочкой управляет DMS."}},
+        {"shellPlaybackHint",
+         {"Displays, fitting and playback are controlled by the selected shell renderer.",
+          "Дисплеї, масштабування й відтворення налаштовуються в обраному рушії оболонки.",
+          "Экраны, масштабирование и воспроизведение настраиваются в выбранном движке оболочки."}},
+        {"caelestiaHint",
+         {"Uses native transitions, GIF/video playback, wallpaper recoloring and dynamic colors. "
+          "MiDnight also supports Wallpaper Engine projects. All available effects, sound, decoder "
+          "and pause options remain in the shell settings.",
+          "Рідні переходи, GIF і відео, тонування шпалер і динамічні кольори. MiDnight також "
+          "підтримує проєкти Wallpaper Engine. Доступні ефекти, звук, декодер і паузи "
+          "налаштовуються в оболонці.",
+          "Родные переходы, GIF и видео, тонирование обоев и динамические цвета. MiDnight также "
+          "поддерживает проекты Wallpaper Engine. Доступные эффекты, звук, декодер и паузы "
+          "настраиваются в оболочке."}},
+        {"caelestiaSettings",
+         {"Open Caelestia / MiDnight settings", "Налаштування Caelestia / MiDnight",
+          "Настройки Caelestia / MiDnight"}},
+        {"caelestiaHandoverHint",
+         {"Saving enables the shell wallpaper renderer and stops this app's renderer. Other shell "
+          "settings are preserved and the original background flags are backed up.",
+          "Після збереження фон відтворюватиме оболонка. Інші її налаштування збережуться; "
+          "початкові параметри фону матимуть резервну копію.",
+          "После сохранения фон будет воспроизводить оболочка. Остальные её настройки сохранятся; "
+          "исходные параметры фона будут сохранены в резервную копию."}},
+        {"caelestiaPathError",
+         {"Your shell version cannot handle quotes, #, ? or line breaks in wallpaper filenames. "
+          "Rename the file or use the Hyprwallselector renderer.",
+          "Ваша версія оболонки не підтримує лапки, #, ? або перенесення рядка в назвах шпалер. "
+          "Перейменуйте файл або виберіть рушій Hyprwallselector.",
+          "Ваша версия оболочки не поддерживает кавычки, #, ? или переносы строк в названиях "
+          "обоев. Переименуйте файл или выберите движок Hyprwallselector."}},
+        {"caelestiaSetupError",
+         {"Could not switch the Caelestia renderer. Check that its CLI and shell are running and "
+          "its background settings have not changed outside the selector.",
+          "Не вдалося перемкнути рушій Caelestia. Перевірте запуск оболонки та її CLI, а також чи "
+          "не змінювалися параметри фону поза селектором.",
+          "Не удалось переключить движок Caelestia. Проверьте запуск оболочки и её CLI, а также не "
+          "менялись ли параметры фона вне селектора."}},
+        {"caelestiaApplyError",
+         {"Caelestia did not accept the wallpaper. Check the formats supported by your shell "
+          "version. Video and Wallpaper Engine need a compatible MiDnight version.",
+          "Caelestia не прийняла шпалери. Перевірте підтримувані формати вашої версії оболонки. "
+          "Для відео й Wallpaper Engine потрібна сумісна версія MiDnight.",
+          "Caelestia не приняла обои. Проверьте форматы вашей версии оболочки. Для видео и "
+          "Wallpaper Engine нужна совместимая версия MiDnight."}},
         {"close", {"Close", "Закрити", "Закрыть"}},
         {"renderer", {"Wallpaper renderer", "Рушій шпалер", "Движок обоев"}},
         {"dmsMode", {"Set up DMS", "Налаштувати DMS", "Настроить DMS"}},

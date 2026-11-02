@@ -9,6 +9,8 @@ parallelogram carousel. Written in C++20 and Qt Quick. Early development release
 - Left/right or the mouse wheel browse; Enter applies; P previews a video.
 - Animated settings with General, Playback and Shell & colors sections.
   Save and Cancel return to the carousel without closing it.
+- Caelestia/MiDnight renderer handover with native effects, theme updates, GIF/video
+  playback and Wallpaper Engine projects where supported by the installed shell.
 - Optional DMS palette and lock-screen sync, including still frames for video wallpapers.
 - Folder browsing stays inside the selector, without an external portal/file-manager
   window competing with the layer-shell overlay. Supports typed paths and mounted disks.
@@ -90,9 +92,32 @@ wallpaper renderer should own each display.
   rather than after it. They run asynchronously, coalesce queued changes and retry
   briefly at login. DMS still controls the actual color extraction and theme update.
   If DMS is unavailable, native wallpaper playback continues normally.
-- **Caelestia:** disable the wallpaper in its Wallpaper and Style settings
-  (`background.wallpaperEnabled: false`), then use the Hyprwallselector renderer.
-  Keep its desktop widgets enabled if desired.
+- **Caelestia / MiDnight:** choose **Caelestia / MiDnight** as the renderer and
+  enable desktop wallpaper management. Saving backs up and enables the supported
+  `background.enabled` / `background.wallpaperEnabled` user settings in
+  `$XDG_CONFIG_HOME/caelestia/shell.json`, then removes this app's native wallpaper
+  surfaces. Selections use `caelestia shell wallpaper set`; a read-back confirms
+  the selected path. Shell sources are never patched.
+  The shell owns transitions, recoloring, dynamic palettes, lock-screen appearance,
+  desktop widgets, fitting and per-display behavior. **Open Caelestia / MiDnight
+  settings** opens its native controls, including the effects, video sound,
+  hardware decoder and automatic pause options available in that shell version.
+  Existing choices are preserved; dynamic colors require the shell's Dynamic scheme.
+  Ordinary Caelestia supports its own image/GIF formats; compatible MiDnight builds
+  also support MP4, MKV and WebM. Video is checked through the CLI's color-preview
+  interface before sending it to the shell. Unsupported formats leave the current
+  wallpaper selected. For Wallpaper Engine, install `linux-wallpaperengine` and
+  use a compatible MiDnight shell/CLI. Browse a project directory, or a parent
+  containing project directories; `project.json` entries use their local preview
+  in the carousel and are handed to the native shell as projects.
+  Switching back to another renderer or disabling background management turns
+  off the shell wallpaper surface, retaining its widgets and other preferences.
+  Explicit recovery: stop the other wallpaper renderer, then run
+  `hyprwallselector --restore-caelestia` to restore the original background flags.
+  Changes made independently to those flags are checked before writing.
+  Some current MiDnight IPC implementations strip `#`/`?` and interpolate single
+  quotes/control characters in filenames. Such paths are rejected before IPC;
+  rename them or use the Hyprwallselector renderer.
 - **end-4 / illogical-impulse:** choose **end-4 (ii)** as the renderer. Selections
   are sent to its `qs -c ii ipc call wallpapers apply` interface. The shell owns
   rendering, transitions, video resource use and monitor behavior in this mode;
@@ -100,10 +125,14 @@ wallpaper renderer should own each display.
 - **Other dotfiles:** disable their wallpaper daemon and use the native renderer.
   Do not solve competing renderers by moving wallpaper above application windows.
 
-The DMS integration is tested with 1.6.3. Caelestia and end-4 interfaces were
-checked against upstream source; complete desktop sessions were not installed
-for testing. Shell APIs can change. Per-monitor selection uses each display's
-own crop, rather than spanning a single image across outputs.
+DMS integration is tested with 1.6.3. Caelestia/MiDnight integration has
+configuration-preservation, IPC, project-catalogue and GUI regression tests.
+The real-session renderer handover is verified on MiDnight commit `f4ade958c1`
+with matching CLI `e6b4900fd`. Wallpaper Engine project dispatch is covered with
+an isolated protocol fixture; a real scene renderer is an optional dependency.
+End-4's interface is checked against upstream source. Shell APIs can change.
+The external shell renderers control their own monitor and playback settings;
+the selector's per-display and pause controls apply to its native renderer.
 
 ## Configuration and recovery
 
@@ -111,6 +140,7 @@ own crop, rather than spanning a single image across outputs.
 - Selections: `~/.local/state/hyprwallselector/state.json`
 - Thumbnails: `~/.cache/hyprwallselector/thumbs/`
 - DMS backup: `~/.local/state/hyprwallselector/dms-backup.json`
+- Caelestia original/managed background flags: `~/.local/state/hyprwallselector/caelestia-backup.json`
 
 XDG overrides are supported. Legacy Python-selector settings and selection are
 imported when native settings do not yet exist. The program does not silently
