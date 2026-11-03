@@ -140,7 +140,7 @@ QString configureCaelestia(bool enabled, bool restore) {
     return {};
 }
 
-QString applyCaelestiaWallpaper(const QString &path) {
+QString resolveCaelestiaWallpaper(const QString &path, QString *displayPath) {
     const QFileInfo file(path);
     if (!file.isFile() || !file.isReadable())
         return "The wallpaper is not a readable local file.";
@@ -165,16 +165,27 @@ QString applyCaelestiaWallpaper(const QString &path) {
     if (file.fileName() == "project.json") {
         if (QStandardPaths::findExecutable("linux-wallpaperengine").isEmpty())
             return "Wallpaper Engine projects require linux-wallpaperengine.";
+    }
+    const auto extension = file.suffix().toLower();
+    if (QStringList{"mov", "avi", "m4v", "mpg", "mpeg", "wmv", "flv", "ogv"}.contains(extension))
+        return "The Caelestia/MiDnight renderer supports MP4, MKV and WebM video wallpapers.";
+    if (displayPath) *displayPath = expected;
+    return {};
+}
+
+QString applyCaelestiaWallpaper(const QString &path) {
+    QString expected;
+    const auto validation = resolveCaelestiaWallpaper(path, &expected);
+    if (!validation.isEmpty()) return validation;
+    const QFileInfo file(path);
+    if (file.fileName() == "project.json") {
         QByteArray help;
         const auto failure = call({"wallpaper", "--help"}, &help);
         if (!failure.isEmpty() || !help.contains("--extract-thumbs"))
             return "Wallpaper Engine projects require a compatible MiDnight CLI and shell.";
     }
     const auto extension = file.suffix().toLower();
-    if (QStringList{"mp4", "mkv", "webm", "mov", "avi", "m4v", "mpg", "mpeg", "wmv", "flv", "ogv"}
-            .contains(extension)) {
-        if (!QStringList{"mp4", "mkv", "webm"}.contains(extension))
-            return "The Caelestia/MiDnight renderer supports MP4, MKV and WebM video wallpapers.";
+    if (QStringList{"mp4", "mkv", "webm"}.contains(extension)) {
         // A still-only Caelestia CLI must reject video before the shell state changes.
         const auto failure =
             call({"wallpaper", "--print", file.canonicalFilePath()}, nullptr, 20000);

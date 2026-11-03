@@ -6,7 +6,7 @@ parallelogram carousel. Written in C++20 and Qt Quick. Early development release
 ## Features
 
 - Alt+T opens the selector; Escape or a second Alt+T closes it.
-- Left/right or the mouse wheel browse; Enter applies; P previews a video.
+- Left/right or the mouse wheel browse; Enter confirms. Caelestia previews the focused wallpaper on the desktop; P plays a card preview with the other renderers.
 - Animated settings with General, Playback and Shell & colors sections.
   Save and Cancel return to the carousel without closing it.
 - Caelestia/MiDnight renderer handover with native effects, theme updates, GIF/video
@@ -114,8 +114,8 @@ wallpaper renderer should own each display.
   hardware decoder and automatic pause options available in that shell version.
   Existing choices are preserved; dynamic colors require the shell's Dynamic scheme.
   Ordinary Caelestia supports its own image/GIF formats; compatible MiDnight builds
-  also support MP4, MKV and WebM. Video is checked through the CLI's color-preview
-  interface before sending it to the shell. Unsupported formats leave the current
+  also support MP4, MKV and WebM. The legacy apply path checks video through the CLI's color-preview
+  interface; the native preview companion checks the shell's video API before previewing. Unsupported formats leave the current
   wallpaper selected. For Wallpaper Engine, install `linux-wallpaperengine` and
   use a compatible MiDnight shell/CLI. Browse a project directory, or a parent
   containing project directories; `project.json` entries use their local preview
@@ -134,6 +134,22 @@ wallpaper renderer should own each display.
   Hyprwallselector's per-display/pause controls only apply to its own renderer.
 - **Other dotfiles:** disable their wallpaper daemon and use the native renderer.
   Do not solve competing renderers by moving wallpaper above application windows.
+
+### Native Caelestia desktop preview
+
+With the companion component loaded, the centered wallpaper is previewed on the desktop after the same 100 ms dwell used by the native picker. The shell handles video, GIFs, transitions and its dynamic preview palette. Enter or a card click confirms through the native setter. Escape, an outside click, focus loss or closing the window cancels and restores the wallpaper that was confirmed when the picker opened. A killed selector is also rolled back by the companion's owner check. A confirmed wallpaper chosen elsewhere takes priority over the old rollback.
+
+Scrolling replaces the pending request and serializes IPC; it does not launch one palette generator for every intermediate card. Confirmation keeps the previewed source running while the native shell saves it. Cards use thumbnails in this mode instead of running a second video decoder. The selector's daemon startup lets Caelestia restore its own wallpaper rather than reapplying a possibly stale selector choice.
+
+The ordinary public shell IPC exposes apply/get, but not native preview. The package therefore ships a small component at `/usr/share/hyprwallselector/caelestia/WallpaperPreview.qml`. Copy it to your personal `~/.config/caelestia/modules/` directory and load it in your **personal Quickshell composition**, in the same configuration that imports `qs.services`. For example, in a user-owned `~/.config/quickshell/caelestia/shell.qml`:
+
+```qml
+import "../../caelestia/modules" as Personal
+// Inside the existing ShellRoot:
+Personal.WallpaperPreview {}
+```
+
+A custom composition/generation script should copy/include that personal component instead of editing installed or upstream shell files. Restart the shell through its normal session manager, then check `caelestia shell hws-preview status`. The component delegates to the shell's `Wallpapers.preview`, `stopPreview` and `setWallpaper`; it contains no renderer or palette implementation. Without the companion, normal confirm/apply remains available and live preview is reported as unavailable. Sandbox UI previews do not change the desktop.
 
 DMS integration is tested with 1.6.3. Caelestia/MiDnight integration has
 configuration-preservation, IPC, project-catalogue and GUI regression tests.

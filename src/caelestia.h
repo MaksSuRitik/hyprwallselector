@@ -5,6 +5,7 @@
 // Empty result means success. Only supported user settings are changed.
 QString configureCaelestia(bool enabled, bool restore = false);
 QString applyCaelestiaWallpaper(const QString &path);
+QString resolveCaelestiaWallpaper(const QString &path, QString *displayPath);
 QString openCaelestiaSettings();
 QString configureCaelestiaPlayback(bool battery, bool fullscreen, bool overlap);
 QString pauseCaelestia(bool paused);

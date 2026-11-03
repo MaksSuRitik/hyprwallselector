@@ -3,6 +3,7 @@
 #include "mediaitem.h"
 #include "memorypolicy.h"
 #include <QFile>
+#include <QFocusEvent>
 #include <QJSValue>
 #include <QJsonDocument>
 #include <QPainter>
@@ -567,6 +568,25 @@ class TestUi : public QObject {
         backend->toggle();
         QVERIFY(view->isVisible());
         QTest::qWait(100);
+    }
+    void dismissNativePickerKeepsDaemonAvailable() {
+        const auto original = backend->settings();
+        auto settings = original;
+        settings["renderer"] = "caelestia";
+        QVERIFY(backend->saveSettings(settings));
+        backend->hide();
+        backend->toggle();
+        QVERIFY(view->isVisible());
+        view->close();
+        QVERIFY(!backend->visible());
+        backend->toggle();
+        QVERIFY(view->isVisible());
+        QFocusEvent focusOut(QEvent::FocusOut);
+        QCoreApplication::sendEvent(view, &focusOut);
+        QVERIFY(!backend->visible());
+        QVERIFY(backend->saveSettings(original));
+        backend->toggle();
+        QVERIFY(view->isVisible());
     }
     void cleanupTestCase() {
         delete view;

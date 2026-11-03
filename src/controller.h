@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "dmspalette.h"
+#include "caelestiapreview.h"
 #include <QElapsedTimer>
 #include <QFileSystemWatcher>
 #include <QFutureWatcher>
@@ -22,6 +23,8 @@ class Controller final : public QObject {
     Q_PROPERTY(QStringList screens READ screens NOTIFY screensChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     DmsPalette m_palette;
+    CaelestiaPreview m_preview;
+    QString m_pendingShellCommit;
     QVariantList m_items;
     QJsonObject m_config;
     QJsonObject m_state;
@@ -89,6 +92,8 @@ class Controller final : public QObject {
     Q_INVOKABLE void scan();
     Q_INVOKABLE bool saveSettings(QVariantMap values);
     Q_INVOKABLE void apply(int index);
+    Q_INVOKABLE void focusWallpaper(int index);
+    Q_INVOKABLE void endWallpaperPreview();
     Q_INVOKABLE void wallpaperPrepared(QString screen, QString path);
     Q_INVOKABLE void wallpaperReady(QString screen, QString path);
     Q_INVOKABLE void reportError(QString message);
@@ -114,6 +119,7 @@ class Controller final : public QObject {
     void itemsChanged();
     void settingsChanged();
     void currentChanged();
+    void previewBaseline(QString path);
     void statusChanged();
     void visibleChanged();
     void pausedChanged();

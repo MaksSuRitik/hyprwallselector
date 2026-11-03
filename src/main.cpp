@@ -26,7 +26,7 @@ int main(int argc, char **argv) {
     Q_INIT_RESOURCE(ui);
     Q_INIT_RESOURCE(shaders);
     QCoreApplication::setApplicationName("hyprwallselector");
-    QCoreApplication::setApplicationVersion("0.2.1");
+    QCoreApplication::setApplicationVersion("0.3.0");
     QCoreApplication::setOrganizationName("Hyprwallselector");
     QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
     QQuickStyle::setStyle("Basic");

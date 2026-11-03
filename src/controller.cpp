@@ -198,6 +198,30 @@ Controller::Controller(bool sandbox, QObject *parent) : QObject(parent), m_sandb
     m_shellRetry.setSingleShot(true);
     m_shellRetry.setInterval(3000);
     connect(&m_shellRetry, &QTimer::timeout, this, &Controller::prepareCaelestia);
+    connect(&m_preview, &CaelestiaPreview::baselineReady, this, [this](const QString &path) {
+        emit currentChanged();
+        emit previewBaseline(path);
+    });
+    connect(&m_preview, &CaelestiaPreview::committed, this, [this](const QString &path) {
+        m_pendingShellCommit.clear();
+        m_allRequest = path;
+        wallpaperReady("ALL", path);
+        setStatus("");
+        hide();
+    });
+    connect(&m_preview, &CaelestiaPreview::previewed, this, [this] { setStatus(""); });
+    connect(&m_preview, &CaelestiaPreview::failed, this, [this](const QString &reason) {
+        if (reason == "unavailable" && !m_pendingShellCommit.isEmpty() && m_preview.unavailable()) {
+            const auto path = m_pendingShellCommit;
+            m_pendingShellCommit.clear();
+            m_preview.shutdown();
+            applyCaelestia(path); // Older shells still retain normal confirm/apply.
+        } else if (m_visible) {
+            m_pendingShellCommit.clear();
+            setStatus(text(reason == "busy" ? "caelestiaPreviewBusy"
+                           : reason == "unsupported" ? "caelestiaApplyError" : "caelestiaPreviewError"));
+        }
+    });
     m_scanDelay.setSingleShot(true);
     m_scanDelay.setInterval(350);
     connect(&m_scanDelay, &QTimer::timeout, this, &Controller::scan);
@@ -229,6 +253,7 @@ Controller::Controller(bool sandbox, QObject *parent) : QObject(parent), m_sandb
     });
 }
 Controller::~Controller() {
+    m_preview.shutdown();
     if (!m_sandbox && m_config["renderer"] == "caelestia" && m_config["manageBackground"].toBool())
         pauseCaelestia(m_config["manualPause"].toBool());
     m_scan.waitForFinished();
@@ -271,6 +296,7 @@ void Controller::load() {
     }
 }
 QString Controller::currentPath() const {
+    if (!m_preview.baseline().isEmpty()) return m_preview.baseline();
     QString monitor =
         m_config["renderer"].toString() == "native" ? m_config["monitor"].toString("ALL") : "ALL";
     auto v = m_state.value(monitor).toObject();
@@ -355,6 +381,8 @@ void Controller::toggle() {
         m_view->show();
 }
 void Controller::hide() {
+    m_pendingShellCommit.clear();
+    m_preview.cancel();
     if (!m_visible)
         return;
     m_visible = false;
@@ -418,6 +446,8 @@ bool Controller::saveSettings(QVariantMap values) {
     const bool oldCaelestia =
         m_config["renderer"] == "caelestia" && m_config["manageBackground"].toBool();
     const bool newCaelestia = next["renderer"] == "caelestia" && next["manageBackground"].toBool();
+    if (oldCaelestia != newCaelestia || folder != m_config["folder"].toString())
+        m_preview.shutdown();
     if (!m_sandbox && oldCaelestia != newCaelestia) {
         const auto error = configureCaelestia(newCaelestia);
         if (!error.isEmpty()) {
@@ -514,8 +544,8 @@ void Controller::prepareCaelestia() {
                      }
                      m_shellPauseRequest = -1;
                      syncShellPause();
-                     if (QFileInfo(currentPath()).isReadable())
-                         applyCaelestia(currentPath());
+                     // The shell restores its own confirmed wallpaper. Merely
+                     // starting the selector must not overwrite a newer native choice.
                  } else {
                      setStatus(text("caelestiaSetupError"));
                      if (++m_shellRetries < 10)
@@ -635,7 +665,19 @@ void Controller::apply(int index) {
         return;
     }
     if (m_config["renderer"] == "caelestia") {
-        applyCaelestia(path);
+        QString display;
+        const auto error = resolveCaelestiaWallpaper(path, &display);
+        if (!error.isEmpty()) {
+            setStatus(text(error.contains("filenames") ? "caelestiaPathError" : "caelestiaApplyError"));
+            return;
+        }
+        if (m_preview.unavailable()) {
+            m_preview.shutdown();
+            applyCaelestia(path);
+        } else {
+            m_pendingShellCommit = path;
+            m_preview.confirm(path, display);
+        }
         return;
     }
     QString target = m_config["monitor"].toString("ALL");
@@ -647,6 +689,21 @@ void Controller::apply(int index) {
     emit wallpaperRequested(target, path, entry["video"].toBool());
     hide();
 }
+void Controller::focusWallpaper(int index) {
+    if (m_sandbox || !m_visible || m_config["renderer"] != "caelestia" ||
+        !m_config["manageBackground"].toBool() || index < 0 || index >= m_items.size()) return;
+    const auto path = m_items[index].toMap()["path"].toString();
+    QString display;
+    const auto error = resolveCaelestiaWallpaper(path, &display);
+    if (!error.isEmpty()) {
+        m_preview.cancel();
+        setStatus(text(error.contains("filenames") ? "caelestiaPathError" : "caelestiaApplyError"));
+        return;
+    }
+    m_preview.open();
+    m_preview.focus(path, display);
+}
+void Controller::endWallpaperPreview() { m_preview.cancel(); }
 void Controller::saveState() {
     if (!m_sandbox && !writeJson(m_statePath, m_state))
         setStatus(text("saveError"));
@@ -811,7 +868,10 @@ void Controller::refreshEnvironment() {
 }
 QString Controller::diagnostic() const {
     return QString::fromUtf8(
-        QJsonDocument(QJsonObject{{"version", "0.2.1"},
+        QJsonDocument(QJsonObject{{"version", "0.3.0"},
+                                  {"desktopPreview", m_preview.active()},
+                                  {"previewOriginal", m_preview.baseline()},
+                                  {"previewConfirming", m_preview.confirming()},
                                   {"caelestiaPauseRequested", m_shellPauseRequest},
                                   {"visible", m_visible},
                                   {"paused", m_paused},
@@ -940,6 +1000,14 @@ QString Controller::text(QString key) const {
         {"folder", {"Wallpaper folder", "Папка зі шпалерами", "Папка с обоями"}},
         {"language", {"Language", "Мова", "Язык"}},
         {"save", {"Save", "Зберегти", "Сохранить"}},
+        {"caelestiaPreviewBusy",
+         {"Close the other wallpaper picker before starting a preview.",
+          "Закрийте інший вибір шпалер, щоб почати примірку.",
+          "Закройте другой выбор обоев, чтобы начать примерку."}},
+        {"caelestiaPreviewError",
+         {"Live preview is unavailable. You can still confirm a wallpaper normally.",
+          "Примірка недоступна. Шпалери можна застосувати звичайним підтвердженням.",
+          "Примерка недоступна. Обои можно применить обычным подтверждением."}},
         {"cancel", {"Cancel", "Скасувати", "Отмена"}},
         {"browse", {"Browse…", "Вибрати…", "Выбрать…"}},
         {"preview", {"Preview", "Перегляд", "Просмотр"}},
@@ -996,7 +1064,14 @@ QString Controller::text(QString key) const {
     return words.value(key, {key, key, key}).value(qMax(0, i));
 }
 
-bool Controller::eventFilter(QObject *, QEvent *event) {
+bool Controller::eventFilter(QObject *watched, QEvent *event) {
+    if (watched == m_view && event->type() == QEvent::Close) {
+        hide();
+        return true;
+    }
+    if (watched == m_view && event->type() == QEvent::FocusOut && m_visible &&
+        m_config["renderer"] == "caelestia")
+        hide();
     if (!m_capture || event->type() != QEvent::KeyPress)
         return false;
     auto *key = static_cast<QKeyEvent *>(event);

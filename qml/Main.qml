@@ -10,6 +10,10 @@ Item {
     property bool settingsOpen: false
     property bool previewing: false
     property int selected: 0
+    property int navigationSerial: 0
+    readonly property bool nativePreview: backend.settings.renderer === "caelestia"
+    onSelectedChanged: updateDesktopPreview()
+    onSettingsOpenChanged: updateDesktopPreview()
     property var entries: backend.items
     property var entry: entries.length ? entries[Math.min(selected, entries.length - 1)] : ({})
     property real uiScale: Math.min(1.0, width / 1000, height / 740)
@@ -29,7 +33,14 @@ Item {
         if (!entries.length || settingsOpen)
             return;
         previewing = false;
+        navigationSerial++;
         selected = (selected + delta + entries.length) % entries.length;
+    }
+    function updateDesktopPreview() {
+        if (backend.visible && !settingsOpen && nativePreview && entries.length)
+            backend.focusWallpaper(selected);
+        else
+            backend.endWallpaperPreview();
     }
     function openSettings() {
         previewing = false;
@@ -56,7 +67,7 @@ Item {
             apply();
             event.accepted = true;
         } else if (event.key === Qt.Key_P || event.text.toLowerCase() === "з") {
-            if (entry.video)
+            if (entry.video && !nativePreview)
                 previewing = !previewing;
             event.accepted = true;
         }
@@ -66,17 +77,27 @@ Item {
         function onItemsChanged() {
             let i = backend.items.findIndex(e => e.path === backend.currentPath);
             selected = i >= 0 ? i : Math.min(selected, Math.max(0, backend.items.length - 1));
+            root.updateDesktopPreview();
         }
         function onSettingsChanged() {
             languageRevision++;
+            root.updateDesktopPreview();
+        }
+        function onPreviewBaseline(path) {
+            if (root.navigationSerial !== 0) return;
+            const i = root.entries.findIndex(e => e.path === path);
+            if (i >= 0) root.selected = i;
         }
         function onVisibleChanged() {
             if (!backend.visible) {
                 previewing = false;
                 settingsOpen = false;
                 settings.close();
-            } else
+            } else {
+                root.navigationSerial = 0;
                 root.forceActiveFocus();
+            }
+            root.updateDesktopPreview();
         }
     }
     MouseArea {
@@ -171,6 +192,7 @@ Item {
                     videoLabel: root.tr("video")
                     currentLabel: root.tr("current")
                     onChosen: {
+                        root.navigationSerial++;
                         root.selected = slot.index;
                         root.apply();
                     }
@@ -250,7 +272,7 @@ Item {
                 font.pixelSize: 10
             }
             SoftButton {
-                visible: root.entry.video || false
+                visible: !root.nativePreview && (root.entry.video || false)
                 x: 143
                 y: 39
                 height: 31
