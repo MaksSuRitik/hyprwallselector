@@ -16,6 +16,9 @@ class SteamImporter final : public QObject {
   public:
     explicit SteamImporter(QObject *parent = nullptr);
     ~SteamImporter() override;
+    // Accept a Steam library, an ancestor within its Workshop path, or 431960 itself.
+    // Never fall back to scanning a Steam/game directory if Workshop is missing.
+    static QString workshopDirectory(QString source);
     // Both paths must be existing directories. No source files are changed.
     bool start(QString source, QString destination);
     void cancel();

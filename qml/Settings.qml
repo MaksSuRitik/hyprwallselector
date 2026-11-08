@@ -574,6 +574,15 @@ Rectangle {
                         }
                     }
                     Text {
+                        objectName: "steamWorkshopFolder"
+                        text: backend.steamWorkshopFolder(steamFolder.text)
+                        visible: text.length > 0
+                        color: "#aac6d6"
+                        font.pixelSize: 10
+                        wrapMode: Text.WrapAnywhere
+                        Layout.fillWidth: true
+                    }
+                    Text {
                         text: panel.tr("steamImmediateHint")
                         color: "#95a5b5"
                         font.pixelSize: 11

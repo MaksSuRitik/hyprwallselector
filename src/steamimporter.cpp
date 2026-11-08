@@ -70,6 +70,11 @@ SteamImportResult importVideos(const QString &source, const QString &destination
         }
     }
     int processed = 0;
+    // Match existing copies by their contents, including legacy 0.3.6 names.
+    // Switching from a library root to 431960 must not duplicate old imports.
+    QHash<qint64, QStringList> existingBySize;
+    for (const auto &entry : QDir(destination).entryInfoList(QDir::Files | QDir::Readable | QDir::Hidden))
+        if (videoFile(entry.filePath())) existingBySize[entry.size()] << entry.absoluteFilePath();
     update(0, {}, true);
     for (const auto &path : files) {
         if (cancelled.load()) break;
@@ -83,7 +88,11 @@ SteamImportResult importVideos(const QString &source, const QString &destination
             relative.toUtf8(), QCryptographicHash::Sha256).toHex().left(12));
         int collision = 0;
         bool duplicate = false;
-        while (QFileInfo::exists(target)) {
+        for (const auto &existing : existingBySize.value(info.size())) {
+            if (cancelled.load()) break;
+            if (identical(path, existing, cancelled)) { duplicate = true; break; }
+        }
+        while (!duplicate && QFileInfo::exists(target)) {
             if (identical(path, target, cancelled)) { duplicate = true; break; }
             if (cancelled.load()) break;
             target = QDir(destination).filePath(info.completeBaseName().left(160) + " - " + suffix +
@@ -126,7 +135,11 @@ SteamImportResult importVideos(const QString &source, const QString &destination
                 output.close();
                 if (ok) {
                     if (!output.rename(target)) fail(relative, output.errorString());
-                    else { output.setAutoRemove(false); ++result.copied; }
+                    else {
+                        output.setAutoRemove(false);
+                        existingBySize[info.size()] << target;
+                        ++result.copied;
+                    }
                 }
             }
         }
@@ -152,9 +165,22 @@ SteamImporter::~SteamImporter() {
     cancel();
     m_job.waitForFinished();
 }
+QString SteamImporter::workshopDirectory(QString source) {
+    if (source.trimmed().isEmpty()) return {};
+    source = QFileInfo(source).canonicalFilePath();
+    if (source.isEmpty() || !QFileInfo(source).isDir()) return {};
+    const auto name = QFileInfo(source).fileName().toLower();
+    QString relative = "steamapps/workshop/content/431960";
+    if (name == "431960") relative.clear();
+    else if (name == "content") relative = "431960";
+    else if (name == "workshop") relative = "content/431960";
+    else if (name == "steamapps") relative = "workshop/content/431960";
+    const QFileInfo workshop(relative.isEmpty() ? source : QDir(source).filePath(relative));
+    return workshop.isDir() && workshop.isReadable() ? workshop.canonicalFilePath() : QString();
+}
 bool SteamImporter::start(QString source, QString destination) {
     if (m_running) return false;
-    source = QFileInfo(source).canonicalFilePath();
+    source = workshopDirectory(source);
     destination = QFileInfo(destination).canonicalFilePath();
     if (source.isEmpty() || destination.isEmpty() || samePath(source, destination) ||
         !QFileInfo(source).isDir() || !QFileInfo(source).isReadable() ||

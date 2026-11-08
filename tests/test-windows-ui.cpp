@@ -27,6 +27,11 @@ class WindowsUiTest : public QObject {
                       "-t", "0.4", "-c:v", "libx264", "-threads", "1", source + "/clip.MP4"});
         QVERIFY(ffmpeg.waitForFinished(15000));
         QCOMPARE(ffmpeg.exitCode(), 0);
+        QVERIFY(QDir().mkpath(profile.filePath("Steam/steamapps/common/game")));
+        QFile unrelated(profile.filePath("Steam/steamapps/common/game/intro.mp4"));
+        QVERIFY(unrelated.open(QIODevice::WriteOnly));
+        QCOMPARE(unrelated.write("game cutscene"), qint64(13));
+        unrelated.close();
         Controller backend(true, nullptr, profile.path());
         auto config = backend.settings();
         config["folder"] = target;
@@ -45,6 +50,8 @@ class WindowsUiTest : public QObject {
         auto *panel = root->findChild<QQuickItem *>("settingsPanel");
         QVERIFY(panel);
         panel->setProperty("tab", 3);
+        QCOMPARE(backend.steamWorkshopFolder(profile.filePath("Steam")),
+                 QFileInfo(profile.filePath("Steam/steamapps/workshop/content/431960")).canonicalFilePath());
         auto *browse = root->findChild<QObject *>("browseSteamFolder");
         QVERIFY(browse);
         QVERIFY(QMetaObject::invokeMethod(browse, "clicked"));
@@ -58,6 +65,7 @@ class WindowsUiTest : public QObject {
         QTRY_VERIFY_WITH_TIMEOUT(!backend.importingSteam(), 15000);
         QVERIFY(QFileInfo::exists(target + "/clip.MP4"));
         QVERIFY(QFileInfo::exists(source + "/clip.MP4"));
+        QVERIFY(!QFileInfo::exists(target + "/intro.mp4"));
         QTRY_COMPARE_WITH_TIMEOUT(backend.items().size(), 1, 15000);
         QVERIFY(backend.items().first().toMap()["video"].toBool());
         QVERIFY(backend.steamImportStatus().contains("Скопійовано: 1"));
@@ -83,6 +91,8 @@ class WindowsUiTest : public QObject {
         QCOMPARE(root->findChild<QObject *>("steamFolder")->property("text").toString(), profile.filePath("Steam"));
         QVERIFY(!backend.importSteamVideos(target, target));
         QVERIFY(!backend.steamImportStatus().isEmpty());
+        QVERIFY(!backend.importingSteam());
+        QVERIFY(!backend.importSteamVideos(profile.filePath("Steam/steamapps/common/game"), target));
         QVERIFY(!backend.importingSteam());
         backend.hide();
     }

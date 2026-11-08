@@ -521,11 +521,15 @@ QUrl Controller::directoryUrl(QString path) const {
 void Controller::openFolder() {
     QDesktopServices::openUrl(QUrl::fromLocalFile(m_config["folder"].toString()));
 }
+QString Controller::steamWorkshopFolder(QString source) const {
+    return SteamImporter::workshopDirectory(source.trimmed().isEmpty() ? QString() : localPath(source));
+}
 bool Controller::importSteamVideos(QString source, QString destination) {
     if (importingSteam()) return false;
     m_hasSteamImport = true;
     m_steamImportError.clear();
-    if (!m_steamImport.start(localPath(source), localPath(destination))) {
+    if (source.trimmed().isEmpty() || destination.trimmed().isEmpty() ||
+        !m_steamImport.start(localPath(source), localPath(destination))) {
         m_steamImportError = text("steamInvalidFolders");
         emit steamImportChanged();
         return false;
@@ -983,12 +987,12 @@ QString Controller::text(QString key) const {
 #endif
     static const QMap<QString, QStringList> words = {
         {"steamImport", {"Steam import", "Імпорт зі Steam", "Импорт из Steam"}},
-        {"steamFolder", {"Steam folder", "Папка Steam", "Папка Steam"}},
-        {"steamImportHint", {"Find videos in Steam and all its subfolders, then copy them to your wallpaper folder.", "Пошук відео в Steam та всіх його підпапках із копіюванням у вашу папку шпалер.", "Поиск видео в Steam и всех его подпапках с копированием в вашу папку обоев."}},
+        {"steamFolder", {"Steam / Wallpaper Engine Workshop folder", "Папка Steam / Workshop Wallpaper Engine", "Папка Steam / Workshop Wallpaper Engine"}},
+        {"steamImportHint", {"Import videos only from Wallpaper Engine Workshop (431960). Steam interface videos and game cutscenes are excluded.", "Імпорт відео лише з Workshop Wallpaper Engine (431960). Відео інтерфейсу Steam та ігор пропускаються.", "Импорт видео только из Workshop Wallpaper Engine (431960). Видео интерфейса Steam и игр пропускаются."}},
         {"steamImmediateHint", {"Choosing a Steam folder starts copying immediately. Existing files are kept. Change the destination in General; save to remember your folder choices.", "Вибір папки Steam одразу запускає копіювання. Наявні файли зберігаються. Папку призначення можна змінити в «Загальні»; збережіть налаштування, щоб запам’ятати вибрані папки.", "Выбор папки Steam сразу запускает копирование. Существующие файлы сохраняются. Папку назначения можно изменить в «Общие»; сохраните настройки, чтобы запомнить выбранные папки."}},
-        {"steamChooseHint", {"Choose Steam or a SteamLibrary folder. Copying starts immediately after selection.", "Виберіть папку Steam або SteamLibrary. Копіювання почнеться одразу після вибору.", "Выберите папку Steam или SteamLibrary. Копирование начнётся сразу после выбора."}},
+        {"steamChooseHint", {"Choose Steam, SteamLibrary or 431960 directly. Only steamapps/workshop/content/431960 will be searched; copying starts after selection.", "Виберіть Steam, SteamLibrary або безпосередньо 431960. Пошук лише в steamapps/workshop/content/431960; копіювання почнеться після вибору.", "Выберите Steam, SteamLibrary или непосредственно 431960. Поиск только в steamapps/workshop/content/431960; копирование начнётся после выбора."}},
         {"steamCopy", {"Find and copy videos", "Знайти та скопіювати", "Найти и скопировать"}},
-        {"steamInvalidFolders", {"Choose a readable Steam folder and a different, writable wallpaper folder in General.", "Виберіть доступну папку Steam та іншу папку шпалер із правом запису в «Загальні».", "Выберите доступную папку Steam и другую папку обоев с правом записи в «Общие»."}},
+        {"steamInvalidFolders", {"Check that this library contains steamapps/workshop/content/431960 (or choose 431960 directly), and select a different, writable wallpaper folder in General.", "Перевірте наявність steamapps/workshop/content/431960 у цій бібліотеці (або виберіть 431960 напряму) та доступ до іншої папки шпалер у «Загальні».", "Проверьте наличие steamapps/workshop/content/431960 в этой библиотеке (или выберите 431960 напрямую) и доступ к другой папке обоев в «Общие»."}},
         {"steamScanning", {"Searching subfolders… Videos found: %1", "Пошук у підпапках… Знайдено відео: %1", "Поиск в подпапках… Найдено видео: %1"}},
         {"steamCopying", {"Copying videos… %1 / %2", "Копіювання відео… %1 / %2", "Копирование видео… %1 / %2"}},
         {"steamFinished", {"Import complete. Copied: %1 · Already present: %2 · Errors: %3", "Імпорт завершено. Скопійовано: %1 · Уже є: %2 · Помилок: %3", "Импорт завершён. Скопировано: %1 · Уже есть: %2 · Ошибок: %3"}},

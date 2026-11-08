@@ -7,14 +7,20 @@ No Python, MSYS2, administrator account or external hotkey tool is required to u
   The selector waits for its first transparent frame and visible thumbnails, then
   fades in over 180 ms. Closing resets the fade, including interrupted openings.
 * Choose the wallpaper directory in Settings. The folder picker includes drive letters.
-* **Settings → Steam import:** choose a Steam or SteamLibrary folder to start searching
-  all its subfolders and copying videos into the wallpaper folder selected in General.
+* **Settings → Steam import:** choose a Steam or SteamLibrary folder, or select its
+  `steamapps/workshop/content/431960` directory directly. Only Wallpaper Engine's
+  Workshop directory (`431960`, the same Steam app ID for every user) and its subfolders
+  are searched. Videos from games, Steam's interface and other applications are excluded.
+  If this Workshop directory is missing, importing stops with an explanation.
+  The resolved Workshop path is displayed in Settings before importing.
+  Videos are copied into the wallpaper folder selected in General.
   Copying starts immediately when a source folder is chosen; save settings to remember
   the folder paths. **Find and copy videos** repeats the import. Progress and cancellation
   are available; closing Settings does not stop the background job.
   MP4, WebM, AVI, M4V, MOV, WMV, MKV, MPG, MPEG, FLV and OGV extensions are recognized,
   including uppercase names. Existing files and the Steam originals are kept; conflicting
-  filenames receive a stable suffix, and matching copies are skipped on repeated imports.
+  filenames receive a stable suffix, and identical contents are skipped even when an
+  earlier import used a different source root or a legacy generated filename.
   Directory links/junctions and the destination subtree are excluded. Scene archives
   (`scene.pkg`) are not video files and are not imported. Additional Steam libraries
   outside the chosen folder can be imported by choosing each library separately.
@@ -88,8 +94,8 @@ To publish from the Windows source branch after testing:
 
 ```sh
 git push origin windows-port
-git tag windows-v0.3.6
-git push origin windows-v0.3.6
+git tag windows-v0.3.7
+git push origin windows-v0.3.7
 ```
 
 Use a new increasing version each time. `.github/workflows/windows-release.yml` builds and
@@ -120,7 +126,7 @@ pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake \
 
 Run `packaging/windows/build.ps1` in PowerShell with `-QtRoot C:\msys64\ucrt64`,
 `-BuildRoot C:\build\hws`, `-OutputRoot C:\build\release` and optionally
-`-InnoCompiler "C:\path\to\ISCC.exe" -Version 0.3.6`. Each bundle is assembled in a new directory.
+`-InnoCompiler "C:\path\to\ISCC.exe" -Version 0.3.7`. Each bundle is assembled in a new directory.
 The script scans PE dependencies recursively and rejects missing libraries.
 Keep the included licenses and source archive with redistributions.
 Installer builds also run the shared uninstall-cleanup code against a temporary

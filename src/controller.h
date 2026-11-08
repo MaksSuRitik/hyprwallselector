@@ -129,6 +129,7 @@ class Controller final : public QObject {
     QString steamImportDetails() const;
     double steamImportProgress() const;
     Q_INVOKABLE bool importSteamVideos(QString source, QString destination);
+    Q_INVOKABLE QString steamWorkshopFolder(QString source) const;
     Q_INVOKABLE void cancelSteamImport() { m_steamImport.cancel(); }
     Q_INVOKABLE void apply(int index);
     Q_INVOKABLE void wallpaperPrepared(QString screen, QString path);
