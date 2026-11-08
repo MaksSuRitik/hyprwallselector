@@ -15,6 +15,12 @@ class UpdatesTest : public QObject {
     }
     WindowsRelease select(QJsonArray array, QString current = "0.2.0") { return UpdateManager::selectRelease(QJsonDocument(array).toJson(), current); }
   private slots:
+    void steamImportUpdateForExistingInstallations() {
+        const QJsonArray published{release("0.3.5"), release("0.3.6")};
+        for (const auto &current : {"0.2.1", "0.3.0", "0.3.3", "0.3.5"})
+            QCOMPARE(select(published, current).version, QString("0.3.6"));
+        QVERIFY(!select(published, "0.3.6").valid());
+    }
     void numericVersionsAndNoDowngrades() {
         QCOMPARE(select({release("0.9.0"), release("0.10.0"), release("0.3.0")}).version, QString("0.10.0"));
         QVERIFY(!select({release("0.2.0"), release("0.1.0")}).valid());

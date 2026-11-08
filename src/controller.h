@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "dmspalette.h"
+#include "steamimporter.h"
 #ifdef Q_OS_WIN
 #include "windowsplatform.h"
 #include "windowslockscreen.h"
@@ -26,6 +27,13 @@ class Controller final : public QObject {
     Q_PROPERTY(bool paused READ paused NOTIFY pausedChanged)
     Q_PROPERTY(QStringList screens READ screens NOTIFY screensChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
+    Q_PROPERTY(bool importingSteam READ importingSteam NOTIFY steamImportChanged)
+    Q_PROPERTY(QString steamImportStatus READ steamImportStatus NOTIFY steamImportChanged)
+    Q_PROPERTY(QString steamImportDetails READ steamImportDetails NOTIFY steamImportChanged)
+    Q_PROPERTY(double steamImportProgress READ steamImportProgress NOTIFY steamImportChanged)
+    SteamImporter m_steamImport;
+    bool m_hasSteamImport = false;
+    QString m_steamImportError;
     DmsPalette m_palette;
 #ifdef Q_OS_WIN
     WindowsPlatform *m_windows = nullptr;
@@ -116,6 +124,12 @@ class Controller final : public QObject {
     Q_INVOKABLE void hide();
     Q_INVOKABLE void scan();
     Q_INVOKABLE bool saveSettings(QVariantMap values);
+    bool importingSteam() const { return m_steamImport.running(); }
+    QString steamImportStatus() const;
+    QString steamImportDetails() const;
+    double steamImportProgress() const;
+    Q_INVOKABLE bool importSteamVideos(QString source, QString destination);
+    Q_INVOKABLE void cancelSteamImport() { m_steamImport.cancel(); }
     Q_INVOKABLE void apply(int index);
     Q_INVOKABLE void wallpaperPrepared(QString screen, QString path);
     Q_INVOKABLE void wallpaperReady(QString screen, QString path);
@@ -150,6 +164,7 @@ class Controller final : public QObject {
     void pausedChanged();
     void screensChanged();
     void busyChanged();
+    void steamImportChanged();
     void wallpaperRequested(QString screen, QString path, bool video);
   private slots:
     void activated();

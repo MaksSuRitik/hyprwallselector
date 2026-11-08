@@ -16,6 +16,7 @@ Rectangle {
     property bool closing: false
     property int tab: 0
     property int languageRevision: 0
+    property bool choosingSteam: false
     signal finished
     transform: Translate {
         id: lift
@@ -35,6 +36,7 @@ Rectangle {
         closing = false;
         draft = Object.assign({}, backend.settings);
         folder.text = draft.folder;
+        steamFolder.text = draft.steamFolder || "";
         language.currentIndex = Math.max(0, ["en", "uk", "ru"].indexOf(draft.language));
         display.currentIndex = Math.max(0, backend.screens.indexOf(draft.monitor));
         recording = false;
@@ -199,7 +201,7 @@ Rectangle {
             y: 10
             spacing: 10
             Repeater {
-                model: ["general", "playback", "integration"]
+                model: ["general", "playback", "integration", "steamImport"]
                 delegate: Button {
                     required property int index
                     required property string modelData
@@ -312,6 +314,7 @@ Rectangle {
                         TextField {
                             id: folder
                             objectName: "wallpaperFolder"
+                            enabled: !backend.importingSteam
                             Layout.fillWidth: true
                             implicitHeight: 42
                             color: "#e9eef5"
@@ -328,7 +331,11 @@ Rectangle {
                         SoftButton {
                             text: panel.tr("browse")
                             objectName: "browseFolder"
-                            onClicked: folderPicker.choose(folder.text)
+                            enabled: !backend.importingSteam
+                            onClicked: {
+                                panel.choosingSteam = false;
+                                folderPicker.choose(folder.text);
+                            }
                         }
                     }
                     RowLayout {
@@ -503,6 +510,115 @@ Rectangle {
                     Layout.fillHeight: true
                 }
             }
+            ScrollView {
+                id: steamPage
+                clip: true
+                contentWidth: availableWidth
+                ColumnLayout {
+                    width: steamPage.availableWidth
+                    spacing: 13
+                    Text {
+                        text: panel.tr("steamImportHint")
+                        color: "#a3b6c7"
+                        font.pixelSize: 12
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                    Text {
+                        text: panel.tr("folder")
+                        color: "#e2eaf2"
+                        font.pixelSize: 13
+                    }
+                    Text {
+                        objectName: "steamDestination"
+                        text: folder.text
+                        color: "#aac6d6"
+                        font.pixelSize: 12
+                        wrapMode: Text.WrapAnywhere
+                        Layout.fillWidth: true
+                    }
+                    Text {
+                        text: panel.tr("steamFolder")
+                        color: "#e2eaf2"
+                        font.pixelSize: 13
+                        Layout.topMargin: 3
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        TextField {
+                            id: steamFolder
+                            objectName: "steamFolder"
+                            Layout.fillWidth: true
+                            implicitHeight: 42
+                            enabled: !backend.importingSteam
+                            color: "#e9eef5"
+                            selectByMouse: true
+                            font.pixelSize: 12
+                            leftPadding: 12
+                            rightPadding: 12
+                            placeholderText: "Steam / SteamLibrary"
+                            background: Rectangle {
+                                radius: 10
+                                color: "#111921"
+                                border.color: steamFolder.activeFocus ? "#aac6d6" : "#41505e"
+                            }
+                        }
+                        SoftButton {
+                            objectName: "browseSteamFolder"
+                            text: panel.tr("browse")
+                            enabled: !backend.importingSteam
+                            onClicked: {
+                                panel.choosingSteam = true;
+                                folderPicker.choose(steamFolder.text);
+                            }
+                        }
+                    }
+                    Text {
+                        text: panel.tr("steamImmediateHint")
+                        color: "#95a5b5"
+                        font.pixelSize: 11
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                    RowLayout {
+                        SoftButton {
+                            objectName: "importSteamVideos"
+                            text: panel.tr("steamCopy")
+                            primary: true
+                            enabled: !backend.importingSteam && steamFolder.text.trim().length > 0
+                            onClicked: backend.importSteamVideos(steamFolder.text, folder.text)
+                        }
+                        SoftButton {
+                            objectName: "cancelSteamImport"
+                            text: panel.tr("cancel")
+                            visible: backend.importingSteam
+                            onClicked: backend.cancelSteamImport()
+                        }
+                    }
+                    ProgressBar {
+                        objectName: "steamImportProgress"
+                        Layout.fillWidth: true
+                        visible: backend.importingSteam
+                        value: backend.steamImportProgress
+                        indeterminate: value === 0
+                    }
+                    Text {
+                        objectName: "steamImportStatus"
+                        text: backend.steamImportStatus
+                        color: "#e2eaf2"
+                        font.pixelSize: 12
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                    Text {
+                        text: backend.steamImportDetails
+                        color: "#95a5b5"
+                        font.pixelSize: 10
+                        wrapMode: Text.WrapAnywhere
+                        Layout.fillWidth: true
+                    }
+                }
+            }
         }
     }
     Text {
@@ -559,6 +675,7 @@ Rectangle {
             tint: "#b5cedc"
             onClicked: {
                 panel.setDraft("folder", folder.text);
+                panel.setDraft("steamFolder", steamFolder.text);
                 if (backend.saveSettings(panel.draft)) {
                     panel.languageRevision++;
                     panel.leave();
@@ -571,8 +688,17 @@ Rectangle {
         parent: panel
         scale: panel.scale
         translate: key => panel.tr(key)
-        onChosen: path => folder.text = path
+        titleKey: panel.choosingSteam ? "steamFolder" : "folder"
+        hintKey: panel.choosingSteam ? "steamChooseHint" : "chooseFolderHint"
+        onChosen: path => {
+            if (panel.choosingSteam) {
+                steamFolder.text = path;
+                backend.importSteamVideos(path, folder.text);
+            } else {
+                folder.text = path;
+            }
+        }
         onClosed: if (panel.visible && !panel.closing)
-            folder.forceActiveFocus()
+            (panel.choosingSteam ? steamFolder : folder).forceActiveFocus()
     }
 }

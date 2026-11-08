@@ -14,6 +14,78 @@
 class WindowsUiTest : public QObject {
     Q_OBJECT
   private slots:
+    void steamImportSettings() {
+        QTemporaryDir profile;
+        QVERIFY(profile.isValid());
+        const auto source = profile.filePath("Steam/steamapps/workshop/content/431960/123");
+        const auto target = profile.filePath("Wallpapers");
+        QVERIFY(QDir().mkpath(source));
+        QVERIFY(QDir().mkpath(target));
+        QProcess ffmpeg;
+        ffmpeg.start(QCoreApplication::applicationDirPath() + "/ffmpeg.exe",
+                     {"-nostdin", "-v", "error", "-f", "lavfi", "-i", "color=c=blue:s=32x32:r=5",
+                      "-t", "0.4", "-c:v", "libx264", "-threads", "1", source + "/clip.MP4"});
+        QVERIFY(ffmpeg.waitForFinished(15000));
+        QCOMPARE(ffmpeg.exitCode(), 0);
+        Controller backend(true, nullptr, profile.path());
+        auto config = backend.settings();
+        config["folder"] = target;
+        config["language"] = "uk";
+        QVERIFY(backend.saveSettings(config));
+        QQuickView view;
+        view.resize(1100, 760);
+        view.setResizeMode(QQuickView::SizeRootObjectToView);
+        view.rootContext()->setContextProperty("backend", &backend);
+        backend.attach(&view);
+        view.setSource(QUrl("qrc:/qml/Main.qml"));
+        QCOMPARE(view.status(), QQuickView::Ready);
+        backend.toggle();
+        auto *root = view.rootObject();
+        QVERIFY(QMetaObject::invokeMethod(root, "openSettings"));
+        auto *panel = root->findChild<QQuickItem *>("settingsPanel");
+        QVERIFY(panel);
+        panel->setProperty("tab", 3);
+        auto *browse = root->findChild<QObject *>("browseSteamFolder");
+        QVERIFY(browse);
+        QVERIFY(QMetaObject::invokeMethod(browse, "clicked"));
+        auto *picker = panel->findChild<QObject *>("folderPicker");
+        QVERIFY(picker);
+        QCOMPARE(picker->property("titleKey").toString(), QString("steamFolder"));
+        auto *address = picker->findChild<QObject *>("folderAddress");
+        QVERIFY(address);
+        address->setProperty("text", profile.filePath("Steam"));
+        QVERIFY(QMetaObject::invokeMethod(picker, "acceptFolder"));
+        QTRY_VERIFY_WITH_TIMEOUT(!backend.importingSteam(), 15000);
+        QVERIFY(QFileInfo::exists(target + "/clip.MP4"));
+        QVERIFY(QFileInfo::exists(source + "/clip.MP4"));
+        QTRY_COMPARE_WITH_TIMEOUT(backend.items().size(), 1, 15000);
+        QVERIFY(backend.items().first().toMap()["video"].toBool());
+        QVERIFY(backend.steamImportStatus().contains("Скопійовано: 1"));
+        QVERIFY(backend.steamImportDetails().isEmpty());
+        auto *repeat = root->findChild<QObject *>("importSteamVideos");
+        QVERIFY(repeat);
+        QVERIFY(QMetaObject::invokeMethod(repeat, "clicked"));
+        QTRY_VERIFY(!backend.importingSteam());
+        QVERIFY(backend.steamImportStatus().contains("Уже є: 1"));
+        if (qEnvironmentVariableIsSet("HWS_TEST_UI")) {
+            QTest::qWait(350);
+            const auto screenshot = view.grabWindow();
+            QVERIFY(!screenshot.isNull());
+            QVERIFY(screenshot.save(qEnvironmentVariable("HWS_TEST_STEAM_CAPTURE", "steam-import-test.png")));
+        }
+        auto *save = root->findChild<QObject *>("saveSettings");
+        QVERIFY(save);
+        QVERIFY(QMetaObject::invokeMethod(save, "clicked"));
+        QTRY_VERIFY(!root->property("settingsOpen").toBool());
+        QCOMPARE(backend.settings()["steamFolder"].toString(), profile.filePath("Steam"));
+        // A saved Steam source remains available when settings are reopened.
+        QVERIFY(QMetaObject::invokeMethod(root, "openSettings"));
+        QCOMPARE(root->findChild<QObject *>("steamFolder")->property("text").toString(), profile.filePath("Steam"));
+        QVERIFY(!backend.importSteamVideos(target, target));
+        QVERIFY(!backend.steamImportStatus().isEmpty());
+        QVERIFY(!backend.importingSteam());
+        backend.hide();
+    }
     void freshDesktopAndRecovery() {
         if (!qEnvironmentVariableIsSet("HWS_TEST_DESKTOP")) QSKIP("Opt-in isolated desktop profile test");
         QTemporaryDir profile;

@@ -2,7 +2,7 @@
  #error BundleDir must point to the deployed application directory
 #endif
 #ifndef AppVersion
- #define AppVersion "0.3.5"
+ #define AppVersion "0.3.6"
 #endif
 #ifndef OutputDir
  #define OutputDir "."

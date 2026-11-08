@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "controller.h"
 #include "mediaitem.h"
+#include "mediaformats.h"
 #ifdef Q_OS_WIN
 #include "nativevideo.h"
 #include "windowsdisplays.h"
@@ -59,11 +60,6 @@ bool writeJson(const QString &path, const QJsonObject &data) {
     QDir().mkpath(QFileInfo(path).absolutePath());
     QSaveFile f(path);
     return f.open(QIODevice::WriteOnly) && f.write(QJsonDocument(data).toJson()) >= 0 && f.commit();
-}
-bool videoFile(const QString &path) {
-    return QStringList{"mp4", "mkv",  "webm", "mov", "avi", "m4v",
-                       "mpg", "mpeg", "wmv",  "flv", "ogv"}
-        .contains(QFileInfo(path).suffix().toLower());
 }
 void asyncRun(QObject *owner, const QString &program, const QStringList &args,
               std::function<void(int, QByteArray)> done = {}) {
@@ -157,6 +153,11 @@ QVariantList catalogue(const QString &folder) {
 Controller::Controller(bool sandbox, QObject *parent, QString storageRoot)
     : QObject(parent), m_sandbox(sandbox), m_storageRoot(std::move(storageRoot)) {
     load();
+    connect(&m_steamImport, &SteamImporter::changed, this, &Controller::steamImportChanged);
+    connect(&m_steamImport, &SteamImporter::finished, this, [this] {
+        if (QFileInfo(m_config["folder"].toString()).canonicalFilePath() == m_steamImport.destination())
+            scan();
+    });
 #ifdef Q_OS_WIN
     if (!m_sandbox) {
         m_startupTimer.start();
@@ -225,7 +226,10 @@ Controller::Controller(bool sandbox, QObject *parent, QString storageRoot)
     m_scanDelay.setSingleShot(true);
     m_scanDelay.setInterval(350);
     connect(&m_scanDelay, &QTimer::timeout, this, &Controller::scan);
-    connect(&m_files, &QFileSystemWatcher::directoryChanged, this, [this] { m_scanDelay.start(); });
+    connect(&m_files, &QFileSystemWatcher::directoryChanged, this, [this] {
+        if (!importingSteam() || QFileInfo(m_config["folder"].toString()).canonicalFilePath() != m_steamImport.destination())
+            m_scanDelay.start();
+    });
     connect(&m_scan, &QFutureWatcher<QVariantList>::finished, this, [this] {
         m_items = m_scan.result();
         m_busy = false;
@@ -265,6 +269,7 @@ void Controller::load() {
     m_statePath = stateRoot + "/hyprwallselector/state.json";
     m_config = {{"folder", QStandardPaths::writableLocation(QStandardPaths::PicturesLocation) +
                                "/Wallpapers"},
+                {"steamFolder", ""},
                 {"language", "en"},
                 {"shortcut", "56+20"},
                 {"shortcutLabel", "Alt+T"},
@@ -515,6 +520,36 @@ QUrl Controller::directoryUrl(QString path) const {
 }
 void Controller::openFolder() {
     QDesktopServices::openUrl(QUrl::fromLocalFile(m_config["folder"].toString()));
+}
+bool Controller::importSteamVideos(QString source, QString destination) {
+    if (importingSteam()) return false;
+    m_hasSteamImport = true;
+    m_steamImportError.clear();
+    if (!m_steamImport.start(localPath(source), localPath(destination))) {
+        m_steamImportError = text("steamInvalidFolders");
+        emit steamImportChanged();
+        return false;
+    }
+    return true;
+}
+QString Controller::steamImportStatus() const {
+    if (!m_steamImportError.isEmpty()) return m_steamImportError;
+    if (!m_hasSteamImport) return {};
+    if (importingSteam()) {
+        if (m_steamImport.scanning()) return text("steamScanning").arg(m_steamImport.found());
+        return text("steamCopying").arg(m_steamImport.processed()).arg(m_steamImport.found());
+    }
+    const auto result = m_steamImport.result();
+    return text(result.cancelled ? "steamCancelled" : "steamFinished")
+        .arg(result.copied).arg(result.skipped).arg(result.errors);
+}
+QString Controller::steamImportDetails() const {
+    if (!m_steamImportError.isEmpty()) return {};
+    return importingSteam() ? m_steamImport.currentFile() : m_steamImport.result().details.join('\n');
+}
+double Controller::steamImportProgress() const {
+    if (!m_steamImport.found()) return 0;
+    return qMin(1.0, double(qMax(0, m_steamImport.processed())) / m_steamImport.found());
 }
 bool Controller::saveSettings(QVariantMap values) {
     QJsonObject next = QJsonObject::fromVariantMap(values);
@@ -947,6 +982,17 @@ QString Controller::text(QString key) const {
     if (winWords.contains(key)) return winWords[key].value(qMax(0, QStringList{"en", "uk", "ru"}.indexOf(m_config["language"].toString())));
 #endif
     static const QMap<QString, QStringList> words = {
+        {"steamImport", {"Steam import", "Імпорт зі Steam", "Импорт из Steam"}},
+        {"steamFolder", {"Steam folder", "Папка Steam", "Папка Steam"}},
+        {"steamImportHint", {"Find videos in Steam and all its subfolders, then copy them to your wallpaper folder.", "Пошук відео в Steam та всіх його підпапках із копіюванням у вашу папку шпалер.", "Поиск видео в Steam и всех его подпапках с копированием в вашу папку обоев."}},
+        {"steamImmediateHint", {"Choosing a Steam folder starts copying immediately. Existing files are kept. Change the destination in General; save to remember your folder choices.", "Вибір папки Steam одразу запускає копіювання. Наявні файли зберігаються. Папку призначення можна змінити в «Загальні»; збережіть налаштування, щоб запам’ятати вибрані папки.", "Выбор папки Steam сразу запускает копирование. Существующие файлы сохраняются. Папку назначения можно изменить в «Общие»; сохраните настройки, чтобы запомнить выбранные папки."}},
+        {"steamChooseHint", {"Choose Steam or a SteamLibrary folder. Copying starts immediately after selection.", "Виберіть папку Steam або SteamLibrary. Копіювання почнеться одразу після вибору.", "Выберите папку Steam или SteamLibrary. Копирование начнётся сразу после выбора."}},
+        {"steamCopy", {"Find and copy videos", "Знайти та скопіювати", "Найти и скопировать"}},
+        {"steamInvalidFolders", {"Choose a readable Steam folder and a different, writable wallpaper folder in General.", "Виберіть доступну папку Steam та іншу папку шпалер із правом запису в «Загальні».", "Выберите доступную папку Steam и другую папку обоев с правом записи в «Общие»."}},
+        {"steamScanning", {"Searching subfolders… Videos found: %1", "Пошук у підпапках… Знайдено відео: %1", "Поиск в подпапках… Найдено видео: %1"}},
+        {"steamCopying", {"Copying videos… %1 / %2", "Копіювання відео… %1 / %2", "Копирование видео… %1 / %2"}},
+        {"steamFinished", {"Import complete. Copied: %1 · Already present: %2 · Errors: %3", "Імпорт завершено. Скопійовано: %1 · Уже є: %2 · Помилок: %3", "Импорт завершён. Скопировано: %1 · Уже есть: %2 · Ошибок: %3"}},
+        {"steamCancelled", {"Import cancelled. Copied: %1 · Already present: %2 · Errors: %3", "Імпорт скасовано. Скопійовано: %1 · Уже є: %2 · Помилок: %3", "Импорт отменён. Скопировано: %1 · Уже есть: %2 · Ошибок: %3"}},
         {"home", {"Home", "Домівка", "Домой"}},
         {"disks", {"Disks", "Диски", "Диски"}},
         {"parentFolder", {"Parent folder", "Батьківська папка", "На уровень выше"}},

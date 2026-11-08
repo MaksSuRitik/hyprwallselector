@@ -18,6 +18,8 @@ Popup {
     height: 480
     padding: 22
     property var translate: key => backend.text(key)
+    property string titleKey: "folder"
+    property string hintKey: "chooseFolderHint"
     property string currentPath: ""
     property string error: ""
     property bool showHidden: false
@@ -86,7 +88,7 @@ Popup {
         spacing: 12
         RowLayout {
             Text {
-                text: picker.translate("folder")
+                text: picker.translate(picker.titleKey)
                 color: "#f1f5f9"
                 font.pixelSize: 20
                 font.weight: Font.DemiBold
@@ -226,7 +228,7 @@ Popup {
         }
         Text {
             Layout.fillWidth: true
-            text: picker.error || picker.translate("chooseFolderHint")
+            text: picker.error || picker.translate(picker.hintKey)
             color: picker.error ? "#efba9e" : "#97aebe"
             font.pixelSize: 11
             wrapMode: Text.WordWrap
